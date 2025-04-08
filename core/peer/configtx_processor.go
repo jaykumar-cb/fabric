@@ -33,7 +33,7 @@ func (tp *ConfigTxProcessor) GenerateSimulationResults(txEnv *common.Envelope, s
 
 	switch txType {
 	case common.HeaderType_CONFIG:
-		peerLogger.Debugf("Processing CONFIG")
+		peerLogger.Infof("Processing CONFIG")
 		if payload.Data == nil {
 			return errors.New("channel config found nil")
 		}
@@ -44,16 +44,21 @@ func (tp *ConfigTxProcessor) GenerateSimulationResults(txEnv *common.Envelope, s
 }
 
 func retrieveChannelConfig(queryExecuter ledger.QueryExecutor) (*common.Config, error) {
+	peerLogger.Debugf("Entering retrieveChannelConfig() Retrieving channel config")
 	configBytes, err := queryExecuter.GetState(peerNamespace, channelConfigKey)
+	peerLogger.Debugf("Data found for channel config key %s", string(configBytes))
 	if err != nil {
 		return nil, err
 	}
 	if configBytes == nil {
+		peerLogger.Debugf("Channel config does not exist, Exiting with error")
 		return nil, nil
 	}
 	configEnvelope := &common.ConfigEnvelope{}
 	if err := proto.Unmarshal(configBytes, configEnvelope); err != nil {
+		peerLogger.Errorf("Error unmarshaling configEnvelope: %s", err)
 		return nil, err
 	}
+	peerLogger.Debugf("Successfully retrieved channel config, %v", configEnvelope)
 	return configEnvelope.Config, nil
 }

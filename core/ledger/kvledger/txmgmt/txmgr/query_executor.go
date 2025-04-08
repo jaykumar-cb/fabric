@@ -69,10 +69,12 @@ func (q *queryExecutor) getState(ns, key string) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 	versionedValue, err := q.txmgr.db.GetState(ns, key)
+	logger.Debugf("In queryExecutors getState() for key %s, versionedValue = %s", key, versionedValue)
 	if err != nil {
 		return nil, nil, err
 	}
 	val, metadata, ver := decomposeVersionedValue(versionedValue)
+	logger.Debugf("getState() decomposed value = %s, metadata = %s, version = %s", val, metadata, ver)
 	if q.collectReadset {
 		q.rwsetBuilder.AddToReadSet(ns, key, ver)
 	}

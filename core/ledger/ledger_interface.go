@@ -26,6 +26,7 @@ import (
 const (
 	GoLevelDB = "goleveldb"
 	CouchDB   = "CouchDB"
+	Couchbase = "Couchbase"
 )
 
 // Initializer encapsulates dependencies for PeerLedgerProvider
@@ -63,6 +64,8 @@ type StateDBConfig struct {
 	// CouchDB is the configuration for CouchDB.  It is used when StateDatabase
 	// is set to "CouchDB".
 	CouchDB *CouchDBConfig
+
+	Couchbase *CouchbaseConfig
 }
 
 // CouchDBConfig is a structure used to configure a CouchInstance.
@@ -98,6 +101,41 @@ type CouchDBConfig struct {
 	// UserCacheSizeMBs needs to be a multiple of 32 MB. If it is not a multiple of 32 MB,
 	// the peer would round the size to the next multiple of 32 MB.
 	UserCacheSizeMBs int
+}
+
+type CouchbaseConfig struct {
+	IsCapellaInstance bool
+	Bucket            string
+	Scope             string
+	// Address is the hostname:port of the Couchbase database instance.
+	Address string
+	// Username is the username used to authenticate with Couchbase. This username
+	// must have read and write access permissions.
+	Username string
+	// Password is the password for Username.
+	Password string
+	////MaxRetries is the maximum number of times to retry Couchbase operations on
+	////failure.
+	//MaxRetries int
+	//// MaxRetriesOnStartup is the maximum number of times to retry Couchbase operations on
+	//// failure when initializing the ledger.
+	//MaxRetriesOnStartup int
+	//// RequestTimeout is the timeout used for Couchbase operations.
+	//RequestTimeout time.Duration
+	//// InternalQueryLimit is the maximum number of records to return internally
+	//// when querying CouchDB.
+	//InternalQueryLimit int
+	//// MaxBatchUpdateSize is the maximum number of records to included in Couchbase
+	//// bulk update operations.
+	//MaxBatchUpdateSize int
+	//// CreateGlobalChangesDB determines whether or not to create the "_global_changes"
+	//// system database.
+	//CreateGlobalChangesDB bool
+	//// UserCacheSizeMBs denotes the user specified maximum mega bytes (MB) to be allocated
+	//// for the user state cache (i.e., all chaincodes deployed by the user). Note that
+	//// UserCacheSizeMBs needs to be a multiple of 32 MB. If it is not a multiple of 32 MB,
+	//// the peer would round the size to the next multiple of 32 MB.
+	//UserCacheSizeMBs int
 }
 
 // PrivateDataConfig is a structure used to configure a private data storage provider.

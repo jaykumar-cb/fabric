@@ -88,5 +88,16 @@ func ledgerConfig() *ledger.Config {
 			UserCacheSizeMBs:      viper.GetInt("ledger.state.couchDBConfig.cacheSize"),
 		}
 	}
+
+	if conf.StateDBConfig.StateDatabase == ledger.Couchbase {
+		conf.StateDBConfig.Couchbase = &ledger.CouchbaseConfig{
+			Address:           viper.GetString("ledger.state.couchbaseConfig.couchbaseAddress"),
+			IsCapellaInstance: viper.GetBool("ledger.state.couchbaseConfig.isCapellaInstance"),
+			Username:          viper.GetString("ledger.state.couchbaseConfig.username"),
+			Password:          viper.GetString("ledger.state.couchbaseConfig.password"),
+			Bucket:            viper.GetString("ledger.state.couchbaseConfig.bucket"),
+			Scope:             viper.GetString("ledger.state.couchbaseConfig.scope"),
+		}
+	}
 	return conf
 }

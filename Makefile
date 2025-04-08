@@ -81,7 +81,7 @@ METADATA_VAR += DockerNamespace=$(DOCKER_NS)
 # 'go list -m' is not used since this fails if the local Go version is older than go.mod
 GO_VER := $(shell grep '^go[ \t]' < go.mod)
 GO_VER := $(strip $(GO_VER:go=))
-GO_TAGS ?=
+GO_TAGS ?= 1.24
 
 RELEASE_EXES = orderer $(TOOLS_EXES)
 RELEASE_IMAGES = baseos ccenv orderer peer
@@ -109,8 +109,7 @@ help: ## List all commands with documentation
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z_-]+:.*?## / {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: all
-all: ## Builds all targets and runs all non-integration tests/checks
-	check-go-version native docker checks
+all: native release docker
 
 .PHONY: checks
 checks: ## Runs basic checks along with unit and integration tests

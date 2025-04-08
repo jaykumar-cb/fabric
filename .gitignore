@@ -25,3 +25,7 @@ TESTS*.xml
 .tox/
 .vagrant/
 .vscode
+
+config
+crypto-config
+test-network

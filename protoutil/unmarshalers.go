@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package protoutil
 
 import (
+	"fmt"
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset/kvrwset"
@@ -98,6 +99,7 @@ func UnmarshalHeader(bytes []byte) (*common.Header, error) {
 // UnmarshalConfigEnvelope unmarshals bytes to a ConfigEnvelope
 func UnmarshalConfigEnvelope(bytes []byte) (*common.ConfigEnvelope, error) {
 	cfg := &common.ConfigEnvelope{}
+	fmt.Printf("DATA HERE: UnmarshalConfigEnvelope(): %s", bytes)
 	err := proto.Unmarshal(bytes, cfg)
 	return cfg, errors.Wrap(err, "error unmarshalling ConfigEnvelope")
 }

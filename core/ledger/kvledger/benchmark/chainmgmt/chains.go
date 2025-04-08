@@ -57,6 +57,18 @@ func newChainsMgr(mgrConf *ChainMgrConf, batchConf *BatchConf, initOp chainInitO
 			MaxBatchUpdateSize: 500,
 		}
 	}
+	if os.Getenv("useCouchbase") == "true" {
+		couchbaseAddr, set := os.LookupEnv("COUCHBASE_ADDR")
+		//isCapellaInstance, set := os.LookupEnv("IS_CAPELLA_INSTANCE")
+		if !set {
+			panic("environment variable 'useCouchbase' is set to true but 'COUCHBASE_ADDR' is not set")
+		}
+		ledgermgmtInitializer.Config.StateDBConfig.StateDatabase = ledger.Couchbase
+		ledgermgmtInitializer.Config.StateDBConfig.Couchbase = &ledger.CouchbaseConfig{
+			Address:           couchbaseAddr,
+			IsCapellaInstance: true,
+		}
+	}
 	ledgerMgr := ledgermgmt.NewLedgerMgr(ledgermgmtInitializer)
 	return &chainsMgr{ledgerMgr, mgrConf, batchConf, initOp, make(map[ChainID]*Chain), &sync.WaitGroup{}}
 }

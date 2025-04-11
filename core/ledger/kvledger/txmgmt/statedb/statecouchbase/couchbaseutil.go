@@ -191,10 +191,10 @@ func constructNamespaceDBName(chainName, namespace string) string {
 
 // internalQueryLimit returns the maximum number of records to return internally
 // when querying CouchDB.
-func (couchbaseInstance *couchbaseInstance) internalQueryLimit() int32 {
-	//return int32(couchInstance.conf.InternalQueryLimit)
-	return 20
-}
+//func (couchbaseInstance *couchbaseInstance) internalQueryLimit() int32 {
+//	//return int32(couchInstance.conf.InternalQueryLimit)
+//	return 20
+//}
 
 func dropDB(couchbaseInstance *couchbaseInstance, dbName string) error {
 	db := &couchbaseDatabase{

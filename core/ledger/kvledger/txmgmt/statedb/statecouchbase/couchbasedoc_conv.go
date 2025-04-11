@@ -91,6 +91,7 @@ type couchbaseDocFields struct {
 }
 
 func validateAndRetrieveFields(doc *couchbaseDoc) (*couchbaseDocFields, error) {
+	couchbaseLogger.Infof("Entering validateAndRetrieveFields, doc: %v", doc)
 	jsonDoc := make(jsonValue)
 	decoder := json.NewDecoder(bytes.NewBuffer(doc.jsonValue))
 	decoder.UseNumber()
@@ -98,7 +99,6 @@ func validateAndRetrieveFields(doc *couchbaseDoc) (*couchbaseDocFields, error) {
 		return nil, err
 	}
 	logger.Debugf("Couchbase doc fields: %s", jsonDoc)
-	logger.Debugf("Couchbase doc attachements: %s", doc.attachment.Attachment)
 	docFields := &couchbaseDocFields{}
 	docFields.id = jsonDoc[idField].(string)
 	if jsonDoc[versionField] == nil {
@@ -111,12 +111,14 @@ func validateAndRetrieveFields(doc *couchbaseDoc) (*couchbaseDocFields, error) {
 
 	var err error
 
-	if doc.attachment.Attachment == nil {
+	if doc.attachment == nil {
 		logger.Debugf("Attachment field is missing, just sending back the stupid stuff")
 		docFields.value, err = json.Marshal(jsonDoc)
 		return docFields, err
 	}
-	docFields.value = doc.attachment.Attachment
+	logger.Debugf("Couchbase doc attachements: %s", doc.attachment)
+	docFields.value = doc.attachment
+	delete(jsonDoc, attachmentField)
 	return docFields, err
 }
 

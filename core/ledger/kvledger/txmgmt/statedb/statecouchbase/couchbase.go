@@ -2,12 +2,14 @@ package statecouchbase
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/couchbase/gocb/v2"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/pkg/errors"
 	"go.uber.org/zap/zapcore"
 	"log"
+	"strings"
 )
 
 var couchbaseLogger = flogging.MustGetLogger("couchbase")
@@ -28,9 +30,13 @@ type couchbaseInstance struct {
 	scope   *gocb.Scope
 }
 
+func (couchbaseInstance *couchbaseInstance) internalQueryLimit() int32 {
+	return 20
+}
+
 type couchbaseDoc struct {
 	jsonValue  []byte
-	attachment *CouchbaseAttachment
+	attachment []byte
 }
 
 type CouchbaseAttachment struct {
@@ -44,27 +50,9 @@ type couchbaseDatabase struct {
 
 // queryResult is used for returning query results from CouchDB
 type queryResult struct {
-	id    string
-	value []byte
-}
-
-type dbInfo struct {
-	DbName string `json:"db_name"`
-	Sizes  struct {
-		File     int `json:"file"`
-		External int `json:"external"`
-		Active   int `json:"active"`
-	} `json:"sizes"`
-	Other struct {
-		DataSize int `json:"data_size"`
-	} `json:"other"`
-	DocDelCount       int    `json:"doc_del_count"`
-	DocCount          int    `json:"doc_count"`
-	DiskSize          int    `json:"disk_size"`
-	DiskFormatVersion int    `json:"disk_format_version"`
-	DataSize          int    `json:"data_size"`
-	CompactRunning    bool   `json:"compact_running"`
-	InstanceStartTime string `json:"instance_start_time"`
+	id         string
+	value      []byte
+	attachment []byte
 }
 
 //func unMarshallSdkResponse(result *gocb.QueryResult) ([]bytes, error) {
@@ -154,11 +142,7 @@ func (dbclient *couchbaseDatabase) readDoc(key string) (*couchbaseDoc, error) {
 		return nil, err
 	}
 
-	couchbaseDoc.attachment = &attachment
-	//jsonBytes, err := jsonValue.MarshalJSON()
-	//if err != nil {
-	//	return nil, err
-	//}
+	couchbaseDoc.attachment = attachment.Attachment
 
 	couchbaseLogger.Infof("[%s] readDoc() for key=%s, value=%s", dbclient.dbName, key, string(jsonValue))
 
@@ -178,7 +162,7 @@ func (dbclient *couchbaseDatabase) saveDoc(key string, value interface{}) error 
 }
 
 func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*queryResult, error) {
-	couchbaseLogger.Infof("[%s] Entering queryDocuments()", dbclient.dbName)
+	couchbaseLogger.Infof("[%s] Entering queryDocuments() with query: %s", dbclient.dbName, query)
 	var results []*queryResult
 
 	rows, err := dbclient.couchbaseInstance.cluster.Query(query, nil)
@@ -187,19 +171,32 @@ func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*queryResult,
 	}
 
 	for rows.Next() {
-		var row json.RawMessage
+		row := make(jsonValue)
 		var result = &queryResult{}
-		var docMetadata docMetadata
+		var attachment CouchbaseAttachment
+
 		err := rows.Row(&row)
-		result.value = row
+
 		if err != nil {
 			return nil, err
 		}
-		err = json.Unmarshal(row, &docMetadata)
+
+		err = rows.Row(&attachment)
+
 		if err != nil {
 			return nil, err
 		}
-		result.id = docMetadata.ID
+
+		result.id = row[idField].(string)
+
+		if attachment.Attachment != nil {
+			result.attachment = attachment.Attachment
+		}
+
+		rowBytes, err := row.toBytes()
+
+		result.value = rowBytes
+		couchbaseLogger.Infof("Processed document: %s", result.id)
 		results = append(results, result)
 	}
 	couchbaseLogger.Infof("[%s] Exiting queryDocuments()", dbclient.dbName)
@@ -311,39 +308,39 @@ func buildBatches(documents []*couchbaseDoc, numBatches int) (map[int][]gocb.Bul
 	return batches, nil
 }
 
+func isEffectivelyEmpty(s string) bool {
+	return strings.TrimSpace(s) == "" || s == "\x00" || s == "\x01"
+}
+
 func (dbclient *couchbaseDatabase) readDocRange(startKey, endKey string, limit int32) ([]*queryResult, string, error) {
 	dbName := dbclient.dbName
-	couchbaseLogger.Infof("[%s] Entering ReadDocRange()  startKey=%s, endKey=%s", dbName, startKey, endKey)
+	couchbaseLogger.Infof("[%s] Entering readDocRange()  startKey=[%q], endKey=[%q]", dbName, startKey, endKey)
+	var query string
+	nextStartKey := ""
+	if limit > 0 {
+		if isEffectivelyEmpty(startKey) && isEffectivelyEmpty(endKey) {
+			couchbaseLogger.Infof("[%s] readDocRange() - no startKey and endKey provided, using limit", dbclient.dbName)
+			query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a ORDER BY META().id ASC LIMIT %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, limit)
+		} else {
+			query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a WHERE META().id >= '%s' AND META().id < '%s' ORDER BY META().id ASC LIMIT %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, startKey, endKey, limit)
+		}
+	} else {
+		if isEffectivelyEmpty(startKey) && isEffectivelyEmpty(endKey) {
+			couchbaseLogger.Infof("[%s] readDocRange() - no startKey and endKey provided, using limit", dbclient.dbName)
+			query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a ORDER BY META().id ASC", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName)
+		} else {
+			query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a WHERE META().id >= '%s' AND META().id < '%s' ORDER BY META().id ASC", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, startKey, endKey)
+		}
+	}
 
-	var results []*queryResult
-	limitUnsigned := uint32(limit)
-	scan, err := dbclient.couchbaseInstance.scope.Collection(dbName).Scan(gocb.RangeScan{
-		From: &gocb.ScanTerm{Term: startKey, Exclusive: false},
-		To:   &gocb.ScanTerm{Term: endKey, Exclusive: true},
-	}, &gocb.ScanOptions{BatchItemLimit: &limitUnsigned})
+	results, err := dbclient.queryDocuments(query)
 	if err != nil {
 		return nil, "", err
 	}
 
-	for {
-		doc := scan.Next()
-		var docMetadata docMetadata
-		if doc != nil {
-			break
-		}
-		var row json.RawMessage
-		err := doc.Content(&row)
-		if err != nil {
-			return nil, "", err
-		}
-		err = json.Unmarshal(row, &docMetadata)
-		if err != nil {
-			return nil, "", err
-		}
-		results = append(results, &queryResult{id: docMetadata.ID, value: row})
+	if len(results) != 0 {
+		nextStartKey = results[len(results)-1].id
 	}
 
-	couchbaseLogger.Infof("[%s] Exiting ReadDocRange()", dbclient.dbName)
-
-	return results, "", nil
+	return results, nextStartKey, nil
 }

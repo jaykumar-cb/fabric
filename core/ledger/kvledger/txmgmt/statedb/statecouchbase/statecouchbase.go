@@ -356,8 +356,8 @@ func (vdb *VersionedDB) GetStateMultipleKeys(namespace string, keys []string) ([
 }
 
 func (vdb *VersionedDB) GetStateRangeScanIterator(namespace string, startKey string, endKey string) (statedb.ResultsIterator, error) {
-	logger.Infof("Entering GetStateRangeScanIterator() with namespace: %s, startKey: %s, endKey: %s", namespace, startKey, endKey)
-	//TODO implement me
+	logger.Infof("Entering GetStateRangeScanIterator() with namespace: %q, startKey: %q, endKey: %q", namespace, startKey, endKey)
+	// I honor internal limit
 	result, err := vdb.GetStateRangeScanIteratorWithPagination(namespace, startKey, endKey, 0)
 	if err != nil {
 		logger.Infof("Exiting GetStateRangeScanIterator() with error: %s", err)
@@ -368,14 +368,14 @@ func (vdb *VersionedDB) GetStateRangeScanIterator(namespace string, startKey str
 }
 
 func (vdb *VersionedDB) GetStateRangeScanIteratorWithPagination(namespace string, startKey string, endKey string, pageSize int32) (statedb.QueryResultsIterator, error) {
-	logger.Infof("Entering GetStateRangeScanIteratorWithPagination() with namespace: %s, startKey: %s, endKey: %s, pageSize: %d", namespace, startKey, endKey, pageSize)
+	logger.Infof("Entering GetStateRangeScanIteratorWithPagination() with namespace: %q, startKey: %q, endKey: %q, pageSize: %d", namespace, startKey, endKey, pageSize)
 	internalQueryLimit := vdb.couchbaseInstance.internalQueryLimit()
 	db, err := vdb.getNamespaceDBHandle(namespace)
 	if err != nil {
 		logger.Infof("Exiting GetStateRangeScanIteratorWithPagination() with error: %s", err)
 		return nil, err
 	}
-	scanner, err := newQueryScanner(namespace, db, "", internalQueryLimit, pageSize, "", startKey, endKey)
+	scanner, err := newQueryScanner(namespace, db, "", internalQueryLimit, pageSize, "", startKey, endKey, true)
 	if err != nil {
 		logger.Infof("Exiting GetStateRangeScanIteratorWithPagination() with error: %s", err)
 		return nil, err
@@ -386,19 +386,25 @@ func (vdb *VersionedDB) GetStateRangeScanIteratorWithPagination(namespace string
 
 func (vdb *VersionedDB) ExecuteQuery(namespace, query string) (statedb.ResultsIterator, error) {
 	logger.Infof("Entering ExecuteQuery() with namespace: %s, query: %s", namespace, query)
-	queryResult, err := vdb.ExecuteQueryWithPagination(namespace, query, "", 0)
+	//internalQueryLimit := vdb.couchbaseInstance.internalQueryLimit()
+	db, err := vdb.getNamespaceDBHandle(namespace)
 	if err != nil {
-		logger.Infof("Exiting ExecuteQuery() with error: %s", err)
+		logger.Infof("Exiting GetStateRangeScanIteratorWithPagination() with error: %s", err)
+		return nil, err
+	}
+	scanner, err := newQueryScanner(namespace, db, "", 20, 0, "0", "", "", false)
+	if err != nil {
+		logger.Infof("Exiting GetStateRangeScanIteratorWithPagination() with error: %s", err)
 		return nil, err
 	}
 	logger.Infof("Exiting ExecuteQuery()")
-	return queryResult, nil
+	return scanner, nil
 }
 
 func (vdb *VersionedDB) ExecuteQueryWithPagination(namespace, query, bookmark string, pageSize int32) (statedb.QueryResultsIterator, error) {
 	logger.Infof("Entering ExecuteQueryWithPagination() with namespace: %s, query: %s, bookmark: %s, pageSize: %d", namespace, query, bookmark, pageSize)
-	internalQueryLimit := vdb.couchbaseInstance.internalQueryLimit()
-	queryString, err := populateQuery(query, internalQueryLimit, bookmark)
+	//internalQueryLimit := 20
+	queryString, err := populateQuery(query, 20, bookmark)
 	if err != nil {
 		logger.Errorf("Error calling applyAdditionalQueryOptions(): %s", err.Error())
 		logger.Infof("Exiting ExecuteQueryWithPagination() with error: %s", err)
@@ -409,7 +415,7 @@ func (vdb *VersionedDB) ExecuteQueryWithPagination(namespace, query, bookmark st
 		logger.Infof("Exiting ExecuteQueryWithPagination() with error: %s", err)
 		return nil, err
 	}
-	scanner, err := newQueryScanner(namespace, db, queryString, internalQueryLimit, pageSize, bookmark, "", "")
+	scanner, err := newQueryScanner(namespace, db, queryString, 20, pageSize, bookmark, "", "", true)
 	if err != nil {
 		logger.Infof("Exiting ExecuteQueryWithPagination() with error: %s", err)
 		return nil, err
@@ -720,6 +726,7 @@ func (scanner *queryScanner) getNextStateRangeScanResults() error {
 		logger.Infof("Exiting getNextStateRangeScanResults() with error: %s", err)
 		return err
 	}
+	logger.Infof("Size of queryResult: %d", len(queryResult))
 	scanner.resultsInfo.results = queryResult
 	scanner.paginationInfo.cursor = 0
 	if scanner.queryDefinition.endKey == nextStartKey {
@@ -736,7 +743,7 @@ func (scanner *queryScanner) getNextStateRangeScanResults() error {
 func rangeScanFilterCouchbaseInternalDocs(db *couchbaseDatabase,
 	startKey, endKey string, queryLimit int32,
 ) ([]*queryResult, string, error) {
-	logger.Infof("Entering rangeScanFilterCouchbaseInternalDocs() with startKey: %s, endKey: %s, queryLimit: %d", startKey, endKey, queryLimit)
+	logger.Infof("Entering rangeScanFilterCouchbaseInternalDocs() with startKey: %q, endKey: %q, queryLimit: %d", startKey, endKey, queryLimit)
 	var finalResults []*queryResult
 	var finalNextStartKey string
 	for {
@@ -776,6 +783,8 @@ func rangeScanFilterCouchbaseInternalDocs(db *couchbaseDatabase,
 
 func (scanner *queryScanner) next() (*couchbaseDoc, error) {
 	logger.Infof("Entering queryScanner.next()")
+	couchbaseLogger.Infof("QueryScanner.next() %v,", scanner.resultsInfo)
+	couchbaseLogger.Infof("QueryScanner.next() cursor: %d, requestedLimit: %d, bookmark: %s,", scanner.paginationInfo.cursor, scanner.paginationInfo.requestedLimit, scanner.paginationInfo.bookmark)
 	if len(scanner.resultsInfo.results) == 0 {
 		logger.Infof("Exiting queryScanner.next() with nil document (no results)")
 		return nil, nil
@@ -807,9 +816,10 @@ func (scanner *queryScanner) next() (*couchbaseDoc, error) {
 	}
 	result := scanner.resultsInfo.results[scanner.paginationInfo.cursor]
 	doc := &couchbaseDoc{
-		jsonValue: result.value,
+		jsonValue:  result.value,
+		attachment: result.attachment,
 	}
-	logger.Infof("Exiting queryScanner.next() with document")
+	logger.Infof("Exiting queryScanner.next() with document: %v", doc)
 	return doc, nil
 }
 
@@ -826,7 +836,7 @@ func (scanner *queryScanner) GetBookmarkAndClose() string {
 }
 
 func newQueryScanner(namespace string, db *couchbaseDatabase, query string, internalQueryLimit,
-	limit int32, bookmark, startKey, endKey string) (*queryScanner, error) {
+	limit int32, bookmark, startKey, endKey string, honorLimitBookmark bool) (*queryScanner, error) {
 	logger.Infof("Entering newQueryScanner() with namespace: %s, query: %s, limit: %d, bookmark: %s, startKey: %s, endKey: %s",
 		namespace, query, limit, bookmark, startKey, endKey)
 	scanner := &queryScanner{namespace, db, &queryDefinition{startKey, endKey, query, internalQueryLimit}, &paginationInfo{-1, limit, bookmark}, &resultsInfo{0, nil}, false}
@@ -835,7 +845,7 @@ func newQueryScanner(namespace string, db *couchbaseDatabase, query string, inte
 	if scanner.queryDefinition.query != "" {
 		err = scanner.executeQueryWithBookmark()
 	} else {
-		//err = scanner.getNextStateRangeScanResults()
+		err = scanner.getNextStateRangeScanResults()
 	}
 	if err != nil {
 		logger.Infof("Exiting newQueryScanner() with error: %s", err)
@@ -937,7 +947,7 @@ func newDBsScanner(dbsToScan []*namespaceDB, prefetchLimit int32, toSkipKeysFrom
 func (s *dbsScanner) beginNextDBScan() error {
 	logger.Infof("Entering beginNextDBScan()")
 	dbUnderScan := s.dbs[s.nextDBToScanIndex]
-	queryScanner, err := newQueryScanner(dbUnderScan.ns, dbUnderScan.db, "", s.prefetchLimit, 0, "", "", "")
+	queryScanner, err := newQueryScanner(dbUnderScan.ns, dbUnderScan.db, "", s.prefetchLimit, 0, "", "", "", true)
 	if err != nil {
 		logger.Infof("Exiting beginNextDBScan() with error: %s", err)
 		return errors.WithMessagef(

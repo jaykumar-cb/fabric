@@ -31,7 +31,7 @@ type couchbaseInstance struct {
 }
 
 func (couchbaseInstance *couchbaseInstance) internalQueryLimit() int32 {
-	return 20
+	return 1000
 }
 
 type couchbaseDoc struct {
@@ -49,10 +49,16 @@ type couchbaseDatabase struct {
 }
 
 // queryResult is used for returning query results from CouchDB
-type queryResult struct {
-	id         string
-	value      []byte
-	attachment []byte
+//type queryResult struct {
+//	id         string
+//	value      []byte
+//	attachment []byte
+//}
+
+type queryResult map[string]interface{}
+
+type IndexData struct {
+	Index string `json:"index"`
 }
 
 //func unMarshallSdkResponse(result *gocb.QueryResult) ([]bytes, error) {
@@ -169,34 +175,45 @@ func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*queryResult,
 	if err != nil {
 		return nil, err
 	}
+	//if !strings.Contains(query, "INDEX") {
+	//	for rows.Next() {
+	//		row := make(jsonValue)
+	//		var result = &queryResult{}
+	//		var attachment CouchbaseAttachment
+	//
+	//		err := rows.Row(&row)
+	//
+	//		if err != nil {
+	//			return nil, err
+	//		}
+	//
+	//		err = rows.Row(&attachment)
+	//
+	//		if err != nil {
+	//			return nil, err
+	//		}
+	//
+	//		result.id = row[idField].(string)
+	//
+	//		if attachment.Attachment != nil {
+	//			result.attachment = attachment.Attachment
+	//		}
+	//
+	//		rowBytes, err := row.toBytes()
+	//
+	//		result.value = rowBytes
+	//		couchbaseLogger.Infof("Processed document: %s", result.id)
+	//		results = append(results, result)
+	//	}
+	//}
 
 	for rows.Next() {
-		row := make(jsonValue)
 		var result = &queryResult{}
-		var attachment CouchbaseAttachment
-
-		err := rows.Row(&row)
-
+		err := rows.Row(&result)
+		rows.Raw()
 		if err != nil {
 			return nil, err
 		}
-
-		err = rows.Row(&attachment)
-
-		if err != nil {
-			return nil, err
-		}
-
-		result.id = row[idField].(string)
-
-		if attachment.Attachment != nil {
-			result.attachment = attachment.Attachment
-		}
-
-		rowBytes, err := row.toBytes()
-
-		result.value = rowBytes
-		couchbaseLogger.Infof("Processed document: %s", result.id)
 		results = append(results, result)
 	}
 	couchbaseLogger.Infof("[%s] Exiting queryDocuments()", dbclient.dbName)
@@ -312,35 +329,42 @@ func isEffectivelyEmpty(s string) bool {
 	return strings.TrimSpace(s) == "" || s == "\x00" || s == "\x01"
 }
 
-func (dbclient *couchbaseDatabase) readDocRange(startKey, endKey string, limit int32) ([]*queryResult, string, error) {
+func (dbclient *couchbaseDatabase) readDocRange(startKey, endKey string, limit int32, offset int32) ([]*queryResult, string, int32, error) {
 	dbName := dbclient.dbName
-	couchbaseLogger.Infof("[%s] Entering readDocRange()  startKey=[%q], endKey=[%q]", dbName, startKey, endKey)
+	newOffset := int32(-1)
+	//limit += 1
+	couchbaseLogger.Infof("[%s] Entering readDocRange()  startKey=[%q], endKey=[%q] limit=[%d]", dbName, startKey, endKey, limit)
 	var query string
 	nextStartKey := ""
-	if limit > 0 {
-		if isEffectivelyEmpty(startKey) && isEffectivelyEmpty(endKey) {
-			couchbaseLogger.Infof("[%s] readDocRange() - no startKey and endKey provided, using limit", dbclient.dbName)
-			query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a ORDER BY META().id ASC LIMIT %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, limit)
-		} else {
-			query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a WHERE META().id >= '%s' AND META().id < '%s' ORDER BY META().id ASC LIMIT %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, startKey, endKey, limit)
-		}
+	//if limit > 0 {
+	if isEffectivelyEmpty(startKey) && isEffectivelyEmpty(endKey) {
+		couchbaseLogger.Infof("[%s] readDocRange() - no startKey and endKey provided, using limit", dbclient.dbName)
+		query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a ORDER BY META().id ASC LIMIT %d OFFSET %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, limit+1, offset)
 	} else {
-		if isEffectivelyEmpty(startKey) && isEffectivelyEmpty(endKey) {
-			couchbaseLogger.Infof("[%s] readDocRange() - no startKey and endKey provided, using limit", dbclient.dbName)
-			query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a ORDER BY META().id ASC", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName)
-		} else {
-			query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a WHERE META().id >= '%s' AND META().id < '%s' ORDER BY META().id ASC", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, startKey, endKey)
-		}
+		query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a WHERE META().id >= '%s' AND META().id <= '%s' ORDER BY META().id ASC LIMIT %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, startKey, endKey, limit+1)
 	}
+	//}
 
 	results, err := dbclient.queryDocuments(query)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 
-	if len(results) != 0 {
-		nextStartKey = results[len(results)-1].id
+	if isEffectivelyEmpty(startKey) && isEffectivelyEmpty(endKey) {
+		couchbaseLogger.Infof("len(results) = %d, limit = %d", len(results), int(limit)+1)
+		if len(results) == int(limit)+1 {
+			couchbaseLogger.Infof("len(results) = %d, limit = %d YES", len(results), int(limit)+1)
+			newOffset = offset + limit
+			results = results[:len(results)-1]
+		}
+	} else {
+		if len(results) != 0 {
+			nextStartKey = (*results[len(results)-1])[idField].(string)
+			results = results[:len(results)-1]
+		}
 	}
 
-	return results, nextStartKey, nil
+	couchbaseLogger.Infof("[%s] Exiting readDocRange()  startKey=[%q], endKey=[%q] results=[%v], nextStartKey=[%s] offset=[%d]", dbclient.dbName, startKey, endKey, results, nextStartKey, newOffset)
+
+	return results, nextStartKey, newOffset, nil
 }

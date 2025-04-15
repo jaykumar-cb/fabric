@@ -35,6 +35,7 @@ RUN apt update && apt install -y \
     curl \
     make
 
+# Install Go
 RUN curl -sL https://go.dev/dl/go${GO_VER}.${TARGETOS}-${TARGETARCH}.tar.gz | tar zxf - -C /usr/local
 ENV PATH="/usr/local/go/bin:$PATH"
 

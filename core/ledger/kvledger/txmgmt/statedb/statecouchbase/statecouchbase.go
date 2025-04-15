@@ -386,13 +386,19 @@ func (vdb *VersionedDB) GetStateRangeScanIteratorWithPagination(namespace string
 
 func (vdb *VersionedDB) ExecuteQuery(namespace, query string) (statedb.ResultsIterator, error) {
 	logger.Infof("Entering ExecuteQuery() with namespace: %s, query: %s", namespace, query)
-	//internalQueryLimit := vdb.couchbaseInstance.internalQueryLimit()
+	internalQueryLimit := vdb.couchbaseInstance.internalQueryLimit()
 	db, err := vdb.getNamespaceDBHandle(namespace)
 	if err != nil {
 		logger.Infof("Exiting GetStateRangeScanIteratorWithPagination() with error: %s", err)
 		return nil, err
 	}
-	scanner, err := newQueryScanner(namespace, db, "", 20, 0, "0", "", "", false)
+	//query, err = populateQuery(query, internalQueryLimit, "", db)
+	//if err != nil {
+	//	logger.Errorf("Error calling applyAdditionalQueryOptions(): %s", err.Error())
+	//	logger.Infof("Exiting ExecuteQueryWithPagination() with error: %s", err)
+	//	return nil, err
+	//}
+	scanner, err := newQueryScanner(namespace, db, query, internalQueryLimit, 0, "", "", "", false)
 	if err != nil {
 		logger.Infof("Exiting GetStateRangeScanIteratorWithPagination() with error: %s", err)
 		return nil, err
@@ -403,19 +409,22 @@ func (vdb *VersionedDB) ExecuteQuery(namespace, query string) (statedb.ResultsIt
 
 func (vdb *VersionedDB) ExecuteQueryWithPagination(namespace, query, bookmark string, pageSize int32) (statedb.QueryResultsIterator, error) {
 	logger.Infof("Entering ExecuteQueryWithPagination() with namespace: %s, query: %s, bookmark: %s, pageSize: %d", namespace, query, bookmark, pageSize)
-	//internalQueryLimit := 20
-	queryString, err := populateQuery(query, 20, bookmark)
-	if err != nil {
-		logger.Errorf("Error calling applyAdditionalQueryOptions(): %s", err.Error())
-		logger.Infof("Exiting ExecuteQueryWithPagination() with error: %s", err)
-		return nil, err
-	}
+	logger.Infof("Couchbase does not support")
+	//return nil, nil
+
+	internalQueryLimit := vdb.couchbaseInstance.internalQueryLimit()
 	db, err := vdb.getNamespaceDBHandle(namespace)
 	if err != nil {
 		logger.Infof("Exiting ExecuteQueryWithPagination() with error: %s", err)
 		return nil, err
 	}
-	scanner, err := newQueryScanner(namespace, db, queryString, 20, pageSize, bookmark, "", "", true)
+	//query, err = populateQuery(query, internalQueryLimit, bookmark, db)
+	//if err != nil {
+	//	logger.Errorf("Error calling applyAdditionalQueryOptions(): %s", err.Error())
+	//	logger.Infof("Exiting ExecuteQueryWithPagination() with error: %s", err)
+	//	return nil, err
+	//}
+	scanner, err := newQueryScanner(namespace, db, query, internalQueryLimit, pageSize, bookmark, "", "", false)
 	if err != nil {
 		logger.Infof("Exiting ExecuteQueryWithPagination() with error: %s", err)
 		return nil, err
@@ -654,6 +663,57 @@ func (vdb *VersionedDB) GetState(namespace, key string) (*statedb.VersionedValue
 	return kv.VersionedValue, nil
 }
 
+////////////// SUPPORT_FOR_INDEXES///////////////////////////////
+
+// ProcessIndexesForChaincodeDeploy creates indexes for a specified namespace
+func (vdb *VersionedDB) ProcessIndexesForChaincodeDeploy(namespace string, indexFilesData map[string][]byte) error {
+	logger.Infof("Entering ProcessIndexesForChaincodeDeploy() with namespace: %s, %d index files", namespace, len(indexFilesData))
+	db, err := vdb.getNamespaceDBHandle(namespace)
+	if err != nil {
+		logger.Infof("Exiting ProcessIndexesForChaincodeDeploy() with error: %s", err)
+		return err
+	}
+
+	var indexFilesName []string
+	for fileName := range indexFilesData {
+		indexFilesName = append(indexFilesName, fileName)
+	}
+	sort.Strings(indexFilesName)
+	for _, fileName := range indexFilesName {
+		var indexData IndexData
+		err = json.Unmarshal(indexFilesData[fileName], &indexData)
+		if err != nil {
+			logger.Errorf("error unmarshalling index data from file [%s] for chaincode [%s] on channel [%s]: %+v",
+				fileName, namespace, vdb.chainName, err)
+			continue
+		}
+		query := indexData.Index
+		query, _, _ = populateQuery(query, 0, "", db)
+		_, err := db.queryDocuments(query)
+		if err != nil {
+			return err
+		}
+
+		//switch {
+		//case err != nil:
+		//	logger.Errorf("error creating index from file [%s] for chaincode [%s] on channel [%s]: %+v",
+		//		fileName, namespace, vdb.chainName, err)
+		//default:
+		//	logger.Infof("successfully submitted index creation request present in the file [%s] for chaincode [%s] on channel [%s]",
+		//		fileName, namespace, vdb.chainName)
+		//}
+	}
+	logger.Infof("Exiting ProcessIndexesForChaincodeDeploy() successfully")
+	return nil
+}
+
+// GetDBType returns the hosted stateDB
+func (vdb *VersionedDB) GetDBType() string {
+	logger.Infof("Entering GetDBType()")
+	logger.Infof("Exiting GetDBType() with value: couchbase")
+	return "couchbase"
+}
+
 ////////////// QUERY_SCANNER_SECTION_STARTS//////////////////////
 
 type queryScanner struct {
@@ -663,6 +723,7 @@ type queryScanner struct {
 	paginationInfo  *paginationInfo
 	resultsInfo     *resultsInfo
 	exhausted       bool
+	offset          int32
 }
 
 type queryDefinition struct {
@@ -720,8 +781,7 @@ func (scanner *queryScanner) getNextStateRangeScanResults() error {
 			queryLimit = moreResultsNeeded
 		}
 	}
-	queryResult, nextStartKey, err := rangeScanFilterCouchbaseInternalDocs(scanner.db,
-		scanner.queryDefinition.startKey, scanner.queryDefinition.endKey, queryLimit)
+	queryResult, nextStartKey, offset, err := scanner.db.readDocRange(scanner.queryDefinition.startKey, scanner.queryDefinition.endKey, queryLimit, scanner.offset)
 	if err != nil {
 		logger.Infof("Exiting getNextStateRangeScanResults() with error: %s", err)
 		return err
@@ -729,57 +789,66 @@ func (scanner *queryScanner) getNextStateRangeScanResults() error {
 	logger.Infof("Size of queryResult: %d", len(queryResult))
 	scanner.resultsInfo.results = queryResult
 	scanner.paginationInfo.cursor = 0
-	if scanner.queryDefinition.endKey == nextStartKey {
-		// as we always set inclusive_end=false to match the behavior of
-		// goleveldb iterator, it is safe to mark the scanner as exhausted
-		scanner.exhausted = true
-		// we still need to update the startKey as it is returned as bookmark
+	if isEffectivelyEmpty(scanner.queryDefinition.startKey) && isEffectivelyEmpty(scanner.queryDefinition.endKey) {
+		if offset == -1 {
+			couchbaseLogger.Infof("Exiting getNextStateRangeScanResults() with offset (Exhausted): %d", offset)
+			scanner.exhausted = true
+		}
+		scanner.offset = offset
+	} else {
+		if scanner.queryDefinition.endKey == nextStartKey {
+			// as we always set inclusive_end=false to match the behavior of
+			// goleveldb iterator, it is safe to mark the scanner as exhausted
+			couchbaseLogger.Infof("Exiting getNextStateRangeScanResults() with endKey (Exhausted): %s", nextStartKey)
+			scanner.exhausted = true
+			// we still need to update the startKey as it is returned as bookmark
+		}
+		scanner.queryDefinition.startKey = nextStartKey
 	}
-	scanner.queryDefinition.startKey = nextStartKey
 	logger.Infof("Exiting getNextStateRangeScanResults()")
 	return nil
 }
 
-func rangeScanFilterCouchbaseInternalDocs(db *couchbaseDatabase,
-	startKey, endKey string, queryLimit int32,
-) ([]*queryResult, string, error) {
-	logger.Infof("Entering rangeScanFilterCouchbaseInternalDocs() with startKey: %q, endKey: %q, queryLimit: %d", startKey, endKey, queryLimit)
-	var finalResults []*queryResult
-	var finalNextStartKey string
-	for {
-		results, nextStartKey, err := db.readDocRange(startKey, endKey, queryLimit)
-		if err != nil {
-			logger.Infof("Error calling ReadDocRange(): %s\n", err.Error())
-			logger.Infof("Exiting rangeScanFilterCouchbaseInternalDocs() with error: %s", err)
-			return nil, "", err
-		}
-		var filteredResults []*queryResult
-		for _, doc := range results {
-			if !isCouchbaseInternalKey(doc.id) {
-				filteredResults = append(filteredResults, doc)
-			}
-		}
-
-		finalResults = append(finalResults, filteredResults...)
-		finalNextStartKey = nextStartKey
-		queryLimit = int32(len(results) - len(filteredResults))
-		if queryLimit == 0 || finalNextStartKey == "" {
-			break
-		}
-		startKey = finalNextStartKey
-	}
-	var err error
-	for i := 0; isCouchbaseInternalKey(finalNextStartKey); i++ {
-		_, finalNextStartKey, err = db.readDocRange(finalNextStartKey, endKey, 1)
-		logger.Infof("i=%d, finalNextStartKey=%s", i, finalNextStartKey)
-		if err != nil {
-			logger.Infof("Exiting rangeScanFilterCouchbaseInternalDocs() with error: %s", err)
-			return nil, "", err
-		}
-	}
-	logger.Infof("Exiting rangeScanFilterCouchbaseInternalDocs() with %d results", len(finalResults))
-	return finalResults, finalNextStartKey, nil
-}
+//func rangeScanFilterCouchbaseInternalDocs(db *couchbaseDatabase,
+//	startKey, endKey string, queryLimit int32,
+//) ([]*queryResult, string, error) {
+//	logger.Infof("Entering rangeScanFilterCouchbaseInternalDocs() with startKey: %q, endKey: %q, queryLimit: %d", startKey, endKey, queryLimit)
+//	var finalResults []*queryResult
+//	var finalNextStartKey string
+//	for {
+//		results, nextStartKey, err := db.readDocRange(startKey, endKey, queryLimit)
+//		if err != nil {
+//			logger.Infof("Error calling ReadDocRange(): %s\n", err.Error())
+//			logger.Infof("Exiting rangeScanFilterCouchbaseInternalDocs() with error: %s", err)
+//			return nil, "", err
+//		}
+//		var filteredResults []*queryResult
+//		for _, doc := range results {
+//			if !isCouchbaseInternalKey(doc.id) {
+//				filteredResults = append(filteredResults, doc)
+//			}
+//		}
+//
+//		finalResults = append(finalResults, filteredResults...)
+//		finalNextStartKey = nextStartKey
+//		queryLimit = int32(len(results) - len(filteredResults))
+//		if queryLimit == 0 || finalNextStartKey == "" {
+//			break
+//		}
+//		startKey = finalNextStartKey
+//	}
+//	var err error
+//	for i := 0; isCouchbaseInternalKey(finalNextStartKey); i++ {
+//		_, finalNextStartKey, err = db.readDocRange(finalNextStartKey, endKey, 1)
+//		logger.Infof("i=%d, finalNextStartKey=%s", i, finalNextStartKey)
+//		if err != nil {
+//			logger.Infof("Exiting rangeScanFilterCouchbaseInternalDocs() with error: %s", err)
+//			return nil, "", err
+//		}
+//	}
+//	logger.Infof("Exiting rangeScanFilterCouchbaseInternalDocs() with %d results", len(finalResults))
+//	return finalResults, finalNextStartKey, nil
+//}
 
 func (scanner *queryScanner) next() (*couchbaseDoc, error) {
 	logger.Infof("Entering queryScanner.next()")
@@ -830,16 +899,22 @@ func (scanner *queryScanner) Close() {
 
 func (scanner *queryScanner) GetBookmarkAndClose() string {
 	logger.Infof("Entering queryScanner.GetBookmarkAndClose()")
-	//TODO implement me
+	retval := ""
+	if scanner.queryDefinition.query != "" {
+		retval = scanner.paginationInfo.bookmark
+	} else {
+		retval = scanner.queryDefinition.startKey
+	}
+	scanner.Close()
 	logger.Infof("Exiting queryScanner.GetBookmarkAndClose()")
-	panic("implement me")
+	return retval
 }
 
 func newQueryScanner(namespace string, db *couchbaseDatabase, query string, internalQueryLimit,
 	limit int32, bookmark, startKey, endKey string, honorLimitBookmark bool) (*queryScanner, error) {
 	logger.Infof("Entering newQueryScanner() with namespace: %s, query: %s, limit: %d, bookmark: %s, startKey: %s, endKey: %s",
 		namespace, query, limit, bookmark, startKey, endKey)
-	scanner := &queryScanner{namespace, db, &queryDefinition{startKey, endKey, query, internalQueryLimit}, &paginationInfo{-1, limit, bookmark}, &resultsInfo{0, nil}, false}
+	scanner := &queryScanner{namespace, db, &queryDefinition{startKey, endKey, query, internalQueryLimit}, &paginationInfo{-1, limit, bookmark}, &resultsInfo{0, nil}, false, 0}
 	var err error
 	// query is defined, then execute the query and return the records and bookmark
 	if scanner.queryDefinition.query != "" {
@@ -866,8 +941,8 @@ func (scanner *queryScanner) executeQueryWithBookmark() error {
 			queryLimit = scanner.paginationInfo.requestedLimit - scanner.resultsInfo.totalRecordsReturned
 		}
 	}
-	queryString, err := populateQuery(scanner.queryDefinition.query,
-		queryLimit, scanner.paginationInfo.bookmark)
+	queryString, updatedBookmark, err := populateQuery(scanner.queryDefinition.query,
+		queryLimit, scanner.paginationInfo.bookmark, scanner.db)
 	if err != nil {
 		logger.Infof("Error calling applyAdditionalQueryOptions(): %s\n", err.Error())
 		logger.Infof("Exiting executeQueryWithBookmark() with error: %s", err)
@@ -880,9 +955,9 @@ func (scanner *queryScanner) executeQueryWithBookmark() error {
 		return err
 	}
 	scanner.resultsInfo.results = queryResult
-	scanner.paginationInfo.bookmark = ""
+	scanner.paginationInfo.bookmark = updatedBookmark
 	scanner.paginationInfo.cursor = 0
-	logger.Infof("Exiting executeQueryWithBookmark()")
+	logger.Infof("Exiting executeQueryWithBookmark() with bookmark: %s, queryResult: %v", updatedBookmark, queryResult)
 	return nil
 }
 

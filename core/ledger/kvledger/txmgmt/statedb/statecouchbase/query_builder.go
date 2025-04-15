@@ -1,7 +1,12 @@
 package statecouchbase
 
 import (
+	"bytes"
+	"fmt"
+	"github.com/pkg/errors"
+	"strconv"
 	"strings"
+	"text/template"
 )
 
 type populator struct {
@@ -16,28 +21,51 @@ func splitFromEnd(s string) (string, string) {
 	return s[:idx], s[idx+1:]
 }
 
-func populateQuery(query string, queryLimit int32, bookmark string) (string, error) {
-	//	query, _ = strings.CutSuffix(query, ";")
-	//	qtemplate := template.New("SQL++")
-	//	qtemplate, err := qtemplate.Parse(query)
-	//	if err != nil {
-	//		return "", err
-	//	}
-	//
-	//	var buf bytes.Buffer
-	//	err = qtemplate.Execute(&buf, populator{Source: fmt.Sprintf("`%s`.`%s`.`%s`", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName)})
-	//	if err != nil {
-	//		return "", err
-	//	}
-	//	query = buf.String()
-	//
-	//	if bookmark == "" {
-	//
-	//	} else {
-	//		cb_bookmark, err := strconv.Atoi(bookmark)
-	//		if err != nil {
-	//			return "", err
-	//		}
-	//	}
-	return "", nil
+func stringToInt32(s string) (int32, error) {
+	i64, err := strconv.ParseInt(s, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return int32(i64), nil
+}
+
+func int32ToString(i int32) string {
+	return strconv.Itoa(int(i))
+}
+
+func populateQuery(query string, queryLimit int32, bookmark string, dbclient *couchbaseDatabase) (string, string, error) {
+
+	couchbaseLogger.Infof("Entering populateQuery(), query=[%s], queryLimint=[%d] bookmark=[%q]", query, queryLimit, bookmark)
+	updatedBookmark := int32(-1)
+	query, _ = strings.CutSuffix(query, ";")
+	qtemplate := template.New("SQL++")
+	qtemplate, err := qtemplate.Parse(query)
+	if err != nil {
+		return "", "", err
+	}
+
+	var buf bytes.Buffer
+	err = qtemplate.Execute(&buf, populator{Source: fmt.Sprintf("`%s`.`%s`.`%s`", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName)})
+	if err != nil {
+		return "", "", err
+	}
+	query = buf.String()
+
+	if queryLimit != 0 {
+		query += fmt.Sprintf(" LIMIT %d", queryLimit)
+	}
+
+	if bookmark != "" {
+		bookmarkInt, err := stringToInt32(bookmark)
+		updatedBookmark = bookmarkInt + queryLimit
+		if err != nil {
+			return "", "", errors.Wrap(err, "Invalid bookmark")
+		}
+		query += fmt.Sprintf(" OFFSET %d", bookmarkInt)
+
+	} else {
+		updatedBookmark = queryLimit
+	}
+	couchbaseLogger.Infof("Exiting populateQuery(), query=[%s] bookmark=[%s]", query)
+	return query, int32ToString(updatedBookmark), nil
 }

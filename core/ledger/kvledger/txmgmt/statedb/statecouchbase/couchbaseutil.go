@@ -207,3 +207,20 @@ func dropDB(couchbaseInstance *couchbaseInstance, dbName string) error {
 func isCouchbaseInternalKey(key string) bool {
 	return len(key) != 0 && key[0] == '_'
 }
+
+// printDocumentIds is a convenience method to print readable log entries for arrays of pointers
+// to couch document IDs
+func printDocumentIds(documentPointers []*couchbaseDoc) (string, error) {
+	logger.Infof("Entering printDocumentIds() with %d documents", len(documentPointers))
+	documentIds := []string{}
+
+	for _, documentPointer := range documentPointers {
+		docMetadata := &docMetadata{}
+		docMetadata.ID = (*documentPointer)[idField].(string)
+		docMetadata.Version = (*documentPointer)[versionField].(string)
+		documentIds = append(documentIds, docMetadata.ID)
+	}
+	result := strings.Join(documentIds, ",")
+	logger.Infof("Exiting printDocumentIds() with document IDs: %s", result)
+	return result, nil
+}

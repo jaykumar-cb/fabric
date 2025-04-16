@@ -1,7 +1,6 @@
 package statecouchbase
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/couchbase/gocb/v2"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
@@ -34,10 +33,7 @@ func (couchbaseInstance *couchbaseInstance) internalQueryLimit() int32 {
 	return 1000
 }
 
-type couchbaseDoc struct {
-	jsonValue  []byte
-	attachment []byte
-}
+type couchbaseDoc map[string]interface{}
 
 type CouchbaseAttachment struct {
 	Attachment []byte `json:"_attachment"`
@@ -54,8 +50,6 @@ type couchbaseDatabase struct {
 //	value      []byte
 //	attachment []byte
 //}
-
-type queryResult map[string]interface{}
 
 type IndexData struct {
 	Index string `json:"index"`
@@ -128,31 +122,18 @@ func (dbclient *couchbaseDatabase) createDatabaseIfNotExist() error {
 
 func (dbclient *couchbaseDatabase) readDoc(key string) (*couchbaseDoc, error) {
 	couchbaseLogger.Infof("[%s] Entering readDoc() for key=%s", dbclient.dbName, key)
-	var couchbaseDoc couchbaseDoc
+	couchbaseDoc := make(couchbaseDoc)
 	document, err := dbclient.couchbaseInstance.scope.Collection(dbclient.dbName).Get(key, nil)
 	if err != nil {
 		couchbaseLogger.Errorf("[%s] Error reading key: %s, Error: %s", dbclient.dbName, key, err)
 		return nil, err
 	}
 
-	var jsonValue json.RawMessage
-	var attachment CouchbaseAttachment
-
-	err = document.Content(&jsonValue)
+	err = document.Content(&couchbaseDoc)
 	if err != nil {
 		return nil, err
 	}
-
-	err = document.Content(&attachment)
-	if err != nil {
-		return nil, err
-	}
-
-	couchbaseDoc.attachment = attachment.Attachment
-
-	couchbaseLogger.Infof("[%s] readDoc() for key=%s, value=%s", dbclient.dbName, key, string(jsonValue))
-
-	couchbaseDoc.jsonValue = jsonValue
+	couchbaseLogger.Infof("[%s] readDoc() for key=%s, value=%s", dbclient.dbName, key, couchbaseDoc)
 	couchbaseLogger.Infof("[%s] Exiting readDoc() for key=%s", dbclient.dbName, key)
 	return &couchbaseDoc, nil
 }
@@ -167,9 +148,9 @@ func (dbclient *couchbaseDatabase) saveDoc(key string, value interface{}) error 
 	return nil
 }
 
-func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*queryResult, error) {
+func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*couchbaseDoc, error) {
 	couchbaseLogger.Infof("[%s] Entering queryDocuments() with query: %s", dbclient.dbName, query)
-	var results []*queryResult
+	results := make([]*couchbaseDoc, 0)
 
 	rows, err := dbclient.couchbaseInstance.cluster.Query(query, nil)
 	if err != nil {
@@ -208,13 +189,12 @@ func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*queryResult,
 	//}
 
 	for rows.Next() {
-		var result = &queryResult{}
+		result := make(couchbaseDoc)
 		err := rows.Row(&result)
-		rows.Raw()
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, result)
+		results = append(results, &result)
 	}
 	couchbaseLogger.Infof("[%s] Exiting queryDocuments()", dbclient.dbName)
 	return results, nil
@@ -258,6 +238,10 @@ func (dbclient *couchbaseDatabase) insertDocuments(docs []*couchbaseDoc) error {
 type batchUpdateResponse struct {
 	ID string
 	Ok bool
+}
+
+func (dbclient *couchbaseDatabase) deleteDocument() string {
+	return dbclient.dbName
 }
 
 // batchUpdateDocuments - batch method to batch update documents
@@ -305,20 +289,14 @@ func buildBatches(documents []*couchbaseDoc, numBatches int) (map[int][]gocb.Bul
 	couchbaseLogger.Infof("Entering buildBatches()")
 	batches := make(map[int][]gocb.BulkOp)
 	for i, document := range documents {
-		var docContent interface{}
-		var docMetadata docMetadata
-		err := json.Unmarshal(document.jsonValue, &docContent)
-		err = json.Unmarshal(document.jsonValue, &docMetadata)
-		if err != nil {
-			return nil, err
-		}
+		//var docMetadata docMetadata
 		_, ok := batches[i%numBatches]
 		if !ok {
 			batches[i%numBatches] = []gocb.BulkOp{}
 		}
 		batches[i%numBatches] = append(batches[i%numBatches], &gocb.UpsertOp{
-			ID:    docMetadata.ID,
-			Value: docContent,
+			ID:    (*document)[idField].(string),
+			Value: document,
 		})
 	}
 	couchbaseLogger.Infof("Exiting buildBatches()")
@@ -329,7 +307,7 @@ func isEffectivelyEmpty(s string) bool {
 	return strings.TrimSpace(s) == "" || s == "\x00" || s == "\x01"
 }
 
-func (dbclient *couchbaseDatabase) readDocRange(startKey, endKey string, limit int32, offset int32) ([]*queryResult, string, int32, error) {
+func (dbclient *couchbaseDatabase) readDocRange(startKey, endKey string, limit int32, offset int32) ([]*couchbaseDoc, string, int32, error) {
 	dbName := dbclient.dbName
 	newOffset := int32(-1)
 	//limit += 1

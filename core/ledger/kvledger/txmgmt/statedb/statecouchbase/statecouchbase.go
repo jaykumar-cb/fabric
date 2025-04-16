@@ -292,7 +292,7 @@ func readChannelMetadata(metadataDB *couchbaseDatabase) (*channelMetadata, error
 		return nil, err
 	}
 	// ReadDoc() not found (404) will result in nil response, in these cases return nil
-	if couchbaseDoc == nil || couchbaseDoc.jsonValue == nil {
+	if couchbaseDoc == nil {
 		logger.Infof("Exiting readChannelMetadata() with nil value")
 		return nil, nil
 	}
@@ -472,7 +472,7 @@ func (vdb *VersionedDB) GetLatestSavePoint() (*version.Height, error) {
 		return nil, err
 	}
 	// ReadDoc() not found (404) will result in nil response, in these cases return height nil
-	if couchbaseDoc == nil || couchbaseDoc.jsonValue == nil {
+	if couchbaseDoc == nil {
 		logger.Infof("Exiting GetLatestSavePoint() with nil height")
 		return nil, nil
 	}
@@ -741,7 +741,7 @@ type paginationInfo struct {
 
 type resultsInfo struct {
 	totalRecordsReturned int32
-	results              []*queryResult
+	results              []*couchbaseDoc
 }
 
 func (scanner *queryScanner) Next() (*statedb.VersionedKV, error) {
@@ -884,12 +884,8 @@ func (scanner *queryScanner) next() (*couchbaseDoc, error) {
 		return nil, nil
 	}
 	result := scanner.resultsInfo.results[scanner.paginationInfo.cursor]
-	doc := &couchbaseDoc{
-		jsonValue:  result.value,
-		attachment: result.attachment,
-	}
-	logger.Infof("Exiting queryScanner.next() with document: %v", doc)
-	return doc, nil
+	logger.Infof("Exiting queryScanner.next() with document: %v", result)
+	return result, nil
 }
 
 func (scanner *queryScanner) Close() {
@@ -1168,7 +1164,7 @@ func (s *snapshotImporter) importState() error {
 			return err
 		}
 		s.pendingDocsBatch = append(s.pendingDocsBatch, doc)
-		s.batchMemorySize += len(doc.jsonValue)
+		s.batchMemorySize += len(*doc)
 
 		// TODO populate with max batch update size.
 		if s.batchMemorySize >= maxDataImportBatchMemorySize ||
@@ -1222,36 +1218,4 @@ func (s *snapshotImporter) storePendingDocs() error {
 
 	logger.Infof("Exiting storePendingDocs()")
 	return nil
-}
-
-// printDocumentIds is a convenience method to print readable log entries for arrays of pointers
-// to couch document IDs
-func printDocumentIds(documentPointers []*couchbaseDoc) (string, error) {
-	logger.Infof("Entering printDocumentIds() with %d documents", len(documentPointers))
-	documentIds := []string{}
-
-	for _, documentPointer := range documentPointers {
-		docMetadata := &docMetadata{}
-		err := json.Unmarshal(documentPointer.jsonValue, &docMetadata)
-		if err != nil {
-			logger.Infof("Exiting printDocumentIds() with error: %s", err)
-			return "", errors.Wrap(err, "error unmarshalling json data")
-		}
-		documentIds = append(documentIds, docMetadata.ID)
-	}
-	result := strings.Join(documentIds, ",")
-	logger.Infof("Exiting printDocumentIds() with document IDs: %s", result)
-	return result, nil
-}
-
-func (d *couchbaseDoc) key() (string, error) {
-	logger.Infof("Entering couchbaseDoc.key()")
-	m := make(jsonValue)
-	if err := json.Unmarshal(d.jsonValue, &m); err != nil {
-		logger.Infof("Exiting couchbaseDoc.key() with error: %s", err)
-		return "", err
-	}
-	key := m[idField].(string)
-	logger.Infof("Exiting couchbaseDoc.key() with key: %s", key)
-	return key, nil
 }

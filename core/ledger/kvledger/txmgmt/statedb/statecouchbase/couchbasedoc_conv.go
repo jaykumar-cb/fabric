@@ -7,7 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package statecouchbase
 
 import (
-	"bytes"
+	_ "bytes"
+	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -30,23 +31,23 @@ type keyValue struct {
 	*statedb.VersionedValue
 }
 
-type jsonValue map[string]interface{}
+//type jsonValue map[string]interface{}
 
-func tryCastingToJSON(b []byte) (isJSON bool, val jsonValue) {
-	var jsonVal map[string]interface{}
-	err := json.Unmarshal(b, &jsonVal)
-	return err == nil, jsonVal
+func tryCastingToJSON(b []byte) (isJSON bool, val couchbaseDoc) {
+	var couchbaseDocument couchbaseDoc
+	err := json.Unmarshal(b, &couchbaseDocument)
+	return err == nil, couchbaseDocument
 }
 
-func castToJSON(b []byte) (jsonValue, error) {
-	var jsonVal map[string]interface{}
-	err := json.Unmarshal(b, &jsonVal)
-	err = errors.Wrap(err, "error unmarshalling json data")
-	return jsonVal, err
-}
+//func castToJSON(b []byte) (jsonValue, error) {
+//	var jsonVal map[string]interface{}
+//	err := json.Unmarshal(b, &jsonVal)
+//	err = errors.Wrap(err, "error unmarshalling json data")
+//	return jsonVal, err
+//}
 
-func (v jsonValue) checkReservedFieldsNotPresent() error {
-	for fieldName := range v {
+func (c *couchbaseDoc) checkReservedFieldsNotPresent() error {
+	for fieldName := range *c {
 		if fieldName == versionField || strings.HasPrefix(fieldName, "_") {
 			return errors.Errorf("field [%s] is not valid for the CouchDB state database", fieldName)
 		}
@@ -54,14 +55,17 @@ func (v jsonValue) checkReservedFieldsNotPresent() error {
 	return nil
 }
 
-//func (v jsonValue) removeRevField() {
-//	delete(v, revField)
-//}
-
-func (v jsonValue) toBytes() ([]byte, error) {
-	jsonBytes, err := json.Marshal(v)
+func (c *couchbaseDoc) toBytes() ([]byte, error) {
+	jsonBytes, err := json.Marshal(c)
 	err = errors.Wrap(err, "error marshalling json data")
 	return jsonBytes, err
+}
+
+func (c *couchbaseDoc) key() (string, error) {
+	logger.Infof("Entering couchbaseDoc.key()")
+	key := (*c)[idField].(string)
+	logger.Infof("Exiting couchbaseDoc.key() with key: %s", key)
+	return key, nil
 }
 
 func couchbaseDocToKeyValue(doc *couchbaseDoc) (*keyValue, error) {
@@ -92,33 +96,42 @@ type couchbaseDocFields struct {
 
 func validateAndRetrieveFields(doc *couchbaseDoc) (*couchbaseDocFields, error) {
 	couchbaseLogger.Infof("Entering validateAndRetrieveFields, doc: %v", doc)
-	jsonDoc := make(jsonValue)
-	decoder := json.NewDecoder(bytes.NewBuffer(doc.jsonValue))
-	decoder.UseNumber()
-	if err := decoder.Decode(&jsonDoc); err != nil {
-		return nil, err
-	}
-	logger.Debugf("Couchbase doc fields: %s", jsonDoc)
+	//decoder := json.NewDecoder(bytes.NewBuffer(*doc))
+	//decoder.UseNumber()
+	//if err := decoder.Decode(&jsonDoc); err != nil {
+	//	return nil, err
+	//}
+	//logger.Inffo()("Couchbase doc fields: %s", jsonDoc)
 	docFields := &couchbaseDocFields{}
-	docFields.id = jsonDoc[idField].(string)
-	if jsonDoc[versionField] == nil {
+
+	if (*doc)[idField] != nil {
+		docFields.id = (*doc)[idField].(string)
+		delete(*doc, idField)
+	}
+
+	if (*doc)[versionField] == nil {
 		return nil, fmt.Errorf("version field %s was not found", versionField)
 	}
-	docFields.versionAndMetadata = jsonDoc[versionField].(string)
+	docFields.versionAndMetadata = (*doc)[versionField].(string)
 
-	delete(jsonDoc, idField)
-	delete(jsonDoc, versionField)
+	delete(*doc, versionField)
 
 	var err error
 
-	if doc.attachment == nil {
-		logger.Debugf("Attachment field is missing, just sending back the stupid stuff")
-		docFields.value, err = json.Marshal(jsonDoc)
+	if (*doc)[attachmentField] == nil {
+		logger.Infof("Attachment field is missing, just sending back the stupid stuff")
+		docFields.value, err = doc.toBytes()
 		return docFields, err
 	}
-	logger.Debugf("Couchbase doc attachements: %s", doc.attachment)
-	docFields.value = doc.attachment
-	delete(jsonDoc, attachmentField)
+	attachmentB64 := (*doc)[attachmentField].(string)
+	logger.Infof("Couchbase doc attachements (After marshalling): %v", attachmentB64)
+
+	docFields.value, err = b64.StdEncoding.DecodeString(attachmentB64)
+	logger.Infof("Couchbase doc attachements (Before marshalling): %v", docFields.value)
+
+	//docFields.value, err = json.Marshal(attachmentString)
+	//logger.Infof("Couchbase doc attachements (After marshalling): %v", docFields)
+	delete(*doc, attachmentField)
 	return docFields, err
 }
 
@@ -129,8 +142,8 @@ func keyValToCouchbaseDoc(kv *keyValue) (*couchbaseDoc, error) {
 		kvTypeJSON
 		kvTypeAttachment
 	)
-	key, value, metadata, version := kv.key, kv.Value, kv.Metadata, kv.Version
-	jsonMap := make(jsonValue)
+	key, value, metadata, _version := kv.key, kv.Value, kv.Metadata, kv.Version
+	couchbaseDocument := make(couchbaseDoc)
 
 	var kvtype kvType
 	switch {
@@ -138,38 +151,33 @@ func keyValToCouchbaseDoc(kv *keyValue) (*couchbaseDoc, error) {
 		kvtype = kvTypeDelete
 	// check for the case where the jsonMap is nil,  this will indicate
 	// a special case for the Unmarshal that results in a valid JSON returning nil
-	case json.Unmarshal(value, &jsonMap) == nil && jsonMap != nil:
+	case json.Unmarshal(value, &couchbaseDocument) == nil && couchbaseDocument != nil:
 		kvtype = kvTypeJSON
-		if err := jsonMap.checkReservedFieldsNotPresent(); err != nil {
+		if err := couchbaseDocument.checkReservedFieldsNotPresent(); err != nil {
 			return nil, err
 		}
 	default:
 		// create an empty map, if the map is nil
-		if jsonMap == nil {
-			jsonMap = make(jsonValue)
+		if couchbaseDocument == nil {
+			couchbaseDocument = make(couchbaseDoc)
 		}
 		kvtype = kvTypeAttachment
 	}
 
-	verAndMetadata, err := encodeVersionAndMetadata(version, metadata)
+	verAndMetadata, err := encodeVersionAndMetadata(_version, metadata)
 	if err != nil {
 		return nil, err
 	}
 	// add the (version + metadata), id, revision, and delete marker (if needed)
-	jsonMap[versionField] = verAndMetadata
-	jsonMap[idField] = key
+	couchbaseDocument[versionField] = verAndMetadata
+	couchbaseDocument[idField] = key
 	if kvtype == kvTypeDelete {
-		jsonMap[deletedField] = true
+		couchbaseDocument[deletedField] = true
 	}
 	if kvtype == kvTypeAttachment {
-		jsonMap[attachmentField] = value
+		couchbaseDocument[attachmentField] = value
 	}
-	jsonBytes, err := jsonMap.toBytes()
-	if err != nil {
-		return nil, err
-	}
-	couchbaseDoc := &couchbaseDoc{jsonValue: jsonBytes}
-	return couchbaseDoc, nil
+	return &couchbaseDocument, nil
 }
 
 // couchSavepointData data for couchdb
@@ -190,47 +198,38 @@ type namespaceDBInfo struct {
 }
 
 func encodeSavepoint(height *version.Height) (*couchbaseDoc, error) {
-	var err error
-	var savepointDoc couchbaseSavepointData
+	var couchbaseDoc = make(couchbaseDoc)
 	// construct savepoint document
-	savepointDoc.BlockNum = height.BlockNum
-	savepointDoc.TxNum = height.TxNum
-	savepointDocJSON, err := json.Marshal(savepointDoc)
-	if err != nil {
-		err = errors.Wrap(err, "failed to marshal savepoint data")
-		logger.Errorf("%+v", err)
-		return nil, err
-	}
-	return &couchbaseDoc{jsonValue: savepointDocJSON}, nil
+	couchbaseDoc["BlockNum"] = height.BlockNum
+	couchbaseDoc["TxNum"] = height.TxNum
+	return &couchbaseDoc, nil
 }
 
 func decodeSavepoint(couchbaseDoc *couchbaseDoc) (*version.Height, error) {
 	savepointDoc := &couchbaseSavepointData{}
-	if err := json.Unmarshal(couchbaseDoc.jsonValue, &savepointDoc); err != nil {
-		err = errors.Wrap(err, "failed to unmarshal savepoint data")
-		logger.Errorf("%+v", err)
-		return nil, err
-	}
+	savepointDoc.TxNum = (*couchbaseDoc)["TxNum"].(uint64)
 	return &version.Height{BlockNum: savepointDoc.BlockNum, TxNum: savepointDoc.TxNum}, nil
 }
 
-func encodeChannelMetadata(metadataDoc *channelMetadata) (*couchbaseDoc, error) {
-	metadataJSON, err := json.Marshal(metadataDoc)
-	if err != nil {
-		err = errors.Wrap(err, "failed to marshal channel metadata")
-		logger.Errorf("%+v", err)
-		return nil, err
-	}
-	return &couchbaseDoc{jsonValue: metadataJSON}, nil
-}
+//func encodeChannelMetadata(metadataDoc *channelMetadata) (*couchbaseDoc, error) {
+//	metadataJSON, err := json.Marshal(metadataDoc)
+//	if err != nil {
+//		err = errors.Wrap(err, "failed to marshal channel metadata")
+//		logger.Errorf("%+v", err)
+//		return nil, err
+//	}
+//	return &couchbaseDoc{jsonValue: metadataJSON}, nil
+//}
 
 func decodeChannelMetadata(couchbaseDoc *couchbaseDoc) (*channelMetadata, error) {
 	metadataDoc := &channelMetadata{}
-	if err := json.Unmarshal(couchbaseDoc.jsonValue, &metadataDoc); err != nil {
-		err = errors.Wrap(err, "failed to unmarshal channel metadata")
-		logger.Errorf("%+v", err)
-		return nil, err
-	}
+	metadataDoc.ChannelName = (*couchbaseDoc)["ChannelName"].(string)
+	metadataDoc.NamespaceDBsInfo = (*couchbaseDoc)["NamespaceDBsInfo"].(map[string]*namespaceDBInfo)
+	//if err := json.Unmarshal(couchbaseDoc.jsonValue, &metadataDoc); err != nil {
+	//	err = errors.Wrap(err, "failed to unmarshal channel metadata")
+	//	logger.Errorf("%+v", err)
+	//	return nil, err
+	//}
 	return metadataDoc, nil
 }
 
@@ -239,26 +238,22 @@ type dataformatInfo struct {
 }
 
 func encodeDataformatInfo(dataFormatVersion string) (*couchbaseDoc, error) {
-	var err error
-	dataformatInfo := &dataformatInfo{
-		Version: dataFormatVersion,
-	}
-	dataformatInfoJSON, err := json.Marshal(dataformatInfo)
-	if err != nil {
-		err = errors.Wrapf(err, "failed to marshal dataformatInfo [%#v]", dataformatInfo)
-		logger.Errorf("%+v", err)
-		return nil, err
-	}
-	return &couchbaseDoc{jsonValue: dataformatInfoJSON}, nil
+	var couchbaseDoc = make(couchbaseDoc)
+
+	//dataformatInfoJSON, err := json.Marshal(dataformatInfo)
+	//if err != nil {
+	//	err = errors.Wrapf(err, "failed to marshal dataformatInfo [%#v]", dataformatInfo)
+	//	logger.Errorf("%+v", err)
+	//	return nil, err
+	//}
+	couchbaseDoc["Version"] = dataFormatVersion
+
+	return &couchbaseDoc, nil
 }
 
 func decodeDataformatInfo(couchbaseDoc *couchbaseDoc) (string, error) {
 	dataformatInfo := &dataformatInfo{}
-	if err := json.Unmarshal(couchbaseDoc.jsonValue, dataformatInfo); err != nil {
-		err = errors.Wrapf(err, "failed to unmarshal json [%#v] into dataformatInfo", couchbaseDoc.jsonValue)
-		logger.Errorf("%+v", err)
-		return "", err
-	}
+	dataformatInfo.Version = (*couchbaseDoc)["Version"].(string)
 	return dataformatInfo.Version, nil
 }
 

@@ -240,8 +240,15 @@ type batchUpdateResponse struct {
 	Ok bool
 }
 
-func (dbclient *couchbaseDatabase) deleteDocument() string {
-	return dbclient.dbName
+func (dbclient *couchbaseDatabase) deleteDocument(key string) error {
+	couchbaseLogger.Infof("[%s] Entering deleteDocument() for key=%s", dbclient.dbName, key)
+	_, err := dbclient.couchbaseInstance.scope.Collection(dbclient.dbName).Remove(key, nil)
+	if err != nil {
+		couchbaseLogger.Errorf("[%s] Error deleting key: %s, Error: %s", dbclient.dbName, key, err)
+		return err
+	}
+	couchbaseLogger.Infof("[%s] Exiting deleteDocument() for key=%s", dbclient.dbName, key)
+	return nil
 }
 
 // batchUpdateDocuments - batch method to batch update documents

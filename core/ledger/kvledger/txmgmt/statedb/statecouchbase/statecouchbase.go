@@ -437,21 +437,30 @@ func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 	logger.Infof("Entering ApplyUpdates() with height: %v", height)
 	for _, ns := range batch.GetUpdatedNamespaces() {
 		updates := batch.GetUpdates(ns)
-		var updatesToBatch []*couchbaseDoc
-		for k, vv := range updates {
-			document, err := keyValToCouchbaseDoc(&keyValue{k, vv})
-			if err != nil {
-				logger.Infof("Exiting ApplyUpdates() with error: %s", err)
-				return err
-			}
-			updatesToBatch = append(updatesToBatch, document)
-		}
-		//go func() {
 		db, err := vdb.getNamespaceDBHandle(ns)
 		if err != nil {
 			logger.Infof("Exiting ApplyUpdates() with error: %s", err)
 			return err
 		}
+		var updatesToBatch []*couchbaseDoc
+		for k, vv := range updates {
+			document, err := keyValToCouchbaseDoc(&keyValue{k, vv})
+			if err != nil {
+				return err
+			}
+			if (*document)[deletedField] != nil && (*document)[deletedField] == true {
+				couchbaseLogger.Infof("ApplyUpdates() deleteing document with key: %s", k)
+				// TODO: Efficient deletion, do in batch or build a query
+				err := db.deleteDocument(k)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+
+			updatesToBatch = append(updatesToBatch, document)
+		}
+		//go func() {
 		if _, err := db.batchUpdateDocuments(updatesToBatch); err != nil {
 			logger.Infof("Exiting ApplyUpdates() with error: %s", err)
 			return err

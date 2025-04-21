@@ -32,10 +32,12 @@ const (
 
 // VersionedDBProvider implements interface VersionedDBProvider
 type VersionedDBProvider struct {
-	couchbaseInstance *couchbaseInstance
-	databases         map[string]*VersionedDB
-	mux               sync.Mutex
-	openCounts        uint64
+	couchbaseInstance  *couchbaseInstance
+	databases          map[string]*VersionedDB
+	mux                sync.Mutex
+	openCounts         uint64
+	cache              *cache
+	redoLoggerProvider *redoLoggerProvider
 }
 
 func NewVersionedDBProvider(config *ledger.CouchbaseConfig, sysNamespaces []string) (*VersionedDBProvider, error) {
@@ -48,17 +50,22 @@ func NewVersionedDBProvider(config *ledger.CouchbaseConfig, sysNamespaces []stri
 	//if err := checkExpectedDataformatVersion(couchbaseInstance); err != nil {
 	//	return nil, err
 	//}
-	//p, err := newRedoLoggerProvider(config.RedoLogPath)
-	//if err != nil {
-	//	return nil, err
-	//}
+	// Todo add RedoLogPath to config
+	p, err := newRedoLoggerProvider("/Users/jay.kumar/Documents/Work/fabric")
+	if err != nil {
+		couchbaseLogger.Infof("Error while initializing RedoLogger, exiting NewVersionedDBProvider() with error")
+		return nil, err
+	}
 
-	//cache := newCache(config.UserCacheSizeMBs, sysNamespaces)
+	// Add this config config.UserCacheSizeMBs
+	cache := newCache(120, sysNamespaces)
 	provider := &VersionedDBProvider{
-		couchbaseInstance: couchbaseInstance,
-		databases:         make(map[string]*VersionedDB),
-		mux:               sync.Mutex{},
-		openCounts:        0,
+		couchbaseInstance:  couchbaseInstance,
+		databases:          make(map[string]*VersionedDB),
+		mux:                sync.Mutex{},
+		openCounts:         0,
+		redoLoggerProvider: p,
+		cache:              cache,
 	}
 	logger.Infof("Exiting NewVersionedDBProvider()")
 	return provider, nil
@@ -77,6 +84,7 @@ func (provider *VersionedDBProvider) GetDBHandle(dbName string, namespaceProvide
 	var err error
 	vdb, err = newVersionedDB(
 		provider.couchbaseInstance,
+		provider.redoLoggerProvider.newRedoLogger(dbName),
 		dbName,
 		namespaceProvider,
 	)
@@ -89,10 +97,47 @@ func (provider *VersionedDBProvider) GetDBHandle(dbName string, namespaceProvide
 	return vdb, nil
 }
 
-func (provider *VersionedDBProvider) ImportFromSnapshot(id string, savepoint *version.Height, itr statedb.FullScanIterator) error {
-	logger.Infof("Entering ImportFromSnapshot() with id: %s", id)
-	//TODO implement me
-	logger.Infof("Exiting ImportFromSnapshot()")
+func (provider *VersionedDBProvider) ImportFromSnapshot(dbName string, savepoint *version.Height, itr statedb.FullScanIterator) error {
+	logger.Infof("Entering ImportFromSnapshot() with dbName: %s, savepoint height: %v", dbName, savepoint)
+	metadataDB, err := createCouchbaseDatabase(provider.couchbaseInstance, constructMetadataDBName(dbName))
+	if err != nil {
+		errMsg := errors.WithMessagef(err, "error while creating the metadata database for channel %s", dbName)
+		logger.Infof("Exiting ImportFromSnapshot() with error: %s", errMsg)
+		return errMsg
+	}
+
+	vdb := &VersionedDB{
+		chainName:         dbName,
+		couchbaseInstance: provider.couchbaseInstance,
+		metadataDB:        metadataDB,
+		channelMetadata: &channelMetadata{
+			ChannelName:      dbName,
+			NamespaceDBsInfo: make(map[string]*namespaceDBInfo),
+		},
+		namespaceDBs: make(map[string]*couchbaseDatabase),
+	}
+	if err := vdb.writeChannelMetadata(); err != nil {
+		errMsg := errors.WithMessage(err, "error while writing channel metadata")
+		logger.Infof("Exiting ImportFromSnapshot() with error: %s", errMsg)
+		return errMsg
+	}
+
+	s := &snapshotImporter{
+		vdb: vdb,
+		itr: itr,
+	}
+	if err := s.importState(); err != nil {
+		logger.Infof("Exiting ImportFromSnapshot() with error: %s", err)
+		return err
+	}
+
+	err = vdb.recordSavepoint(savepoint)
+	if err != nil {
+		logger.Infof("Exiting ImportFromSnapshot() with error: %s", err)
+		return err
+	}
+
+	logger.Infof("Exiting ImportFromSnapshot() successfully")
 	return nil
 }
 
@@ -104,6 +149,7 @@ func (provider *VersionedDBProvider) BytesKeySupported() bool {
 
 func (provider *VersionedDBProvider) Close() {
 	logger.Infof("Entering Close()")
+	provider.redoLoggerProvider.close()
 	logger.Infof("Exiting Close()")
 }
 
@@ -148,6 +194,12 @@ func (provider *VersionedDBProvider) Drop(dbName string) error {
 
 	delete(provider.databases, dbName)
 
+	err = provider.redoLoggerProvider.leveldbProvider.Drop(dbName)
+	if err != nil {
+		logger.Infof("Exiting Drop() with error: %s", err)
+		return err
+	}
+
 	logger.Infof("Exiting Drop()")
 	return nil
 }
@@ -165,7 +217,7 @@ type VersionedDB struct {
 }
 
 // newVersionedDB constructs an instance of VersionedDB
-func newVersionedDB(couchbaseInstance *couchbaseInstance, dbName string, nsProvider statedb.NamespaceProvider) (*VersionedDB, error) {
+func newVersionedDB(couchbaseInstance *couchbaseInstance, redoLogger *redoLogger, dbName string, nsProvider statedb.NamespaceProvider) (*VersionedDB, error) {
 	logger.Infof("Entering newVersionedDB() with database name: %s", dbName)
 	// CreateCouchDatabase creates a Couchbase database object, as well as the underlying database if it does not exist
 	chainName := dbName
@@ -184,12 +236,46 @@ func newVersionedDB(couchbaseInstance *couchbaseInstance, dbName string, nsProvi
 		namespaceDBs:      namespaceDBMap,
 	}
 
+	logger.Infof("chain [%s]: checking for redolog record", chainName)
+	redologRecord, err := redoLogger.load()
+	if err != nil {
+		logger.Infof("Exiting newVersionedDB() with error: %s", err)
+		return nil, err
+	}
+
+	savepoint, err := vdb.GetLatestSavePoint()
+	if err != nil {
+		logger.Infof("Exiting newVersionedDB() with error: %s", err)
+		return nil, err
+	}
+
 	// TODO: update the following line
-	isNewDB := true
+	isNewDB := savepoint == nil
 	if err = vdb.initChannelMetadata(isNewDB, nsProvider); err != nil {
 		logger.Infof("Exiting newVersionedDB() with error: %s", err)
 		return nil, err
 	}
+
+	// in normal circumstances, redolog is expected to be either equal to the last block
+	// committed to the statedb or one ahead (in the event of a crash). However, either of
+	// these or both could be nil on first time start (fresh start/rebuild)
+	if redologRecord == nil || savepoint == nil {
+		logger.Infof("chain [%s]: No redo-record or save point present", chainName)
+		logger.Infof("Exiting newVersionedDB() successfully")
+		return vdb, nil
+	}
+
+	logger.Infof("chain [%s]: save point = %#v, version of redolog record = %#v",
+		chainName, savepoint, redologRecord.Version)
+
+	if redologRecord.Version.BlockNum-savepoint.BlockNum == 1 {
+		logger.Infof("chain [%s]: Re-applying last batch", chainName)
+		if err := vdb.ApplyUpdates(redologRecord.UpdateBatch, redologRecord.Version); err != nil {
+			logger.Infof("Exiting newVersionedDB() with error: %s", err)
+			return nil, err
+		}
+	}
+	logger.Infof("Exiting newVersionedDB() successfully")
 	logger.Infof("Exiting newVersionedDB()")
 	return vdb, nil
 }
@@ -460,12 +546,17 @@ func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 
 			updatesToBatch = append(updatesToBatch, document)
 		}
-		//go func() {
-		if _, err := db.batchUpdateDocuments(updatesToBatch); err != nil {
-			logger.Infof("Exiting ApplyUpdates() with error: %s", err)
-			return err
-		}
-		//}()
+		go func() {
+			if _, err := db.batchUpdateDocuments(updatesToBatch); err != nil {
+				logger.Infof("Exiting ApplyUpdates() with error: %s", err)
+				return
+			}
+		}()
+	}
+	if err := vdb.recordSavepoint(height); err != nil {
+		logger.Errorf("Error during recordSavepoint: %s", err.Error())
+		logger.Infof("Exiting ApplyUpdates() with recordSavepoint error: %s", err)
+		return err
 	}
 	logger.Infof("Exiting ApplyUpdates()")
 	return nil
@@ -477,6 +568,10 @@ func (vdb *VersionedDB) GetLatestSavePoint() (*version.Height, error) {
 	couchbaseDoc, err := vdb.metadataDB.readDoc(savepointDocID)
 	if err != nil {
 		logger.Errorf("Failed to read savepoint data %s", err.Error())
+		if strings.Contains(err.Error(), "document not found") == true {
+			logger.Infof("Exiting GetLatestSavePoint() with nil height, from error block")
+			return nil, nil
+		}
 		logger.Infof("Exiting GetLatestSavePoint() with error: %s", err)
 		return nil, err
 	}

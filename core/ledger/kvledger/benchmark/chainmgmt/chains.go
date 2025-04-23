@@ -65,8 +65,11 @@ func newChainsMgr(mgrConf *ChainMgrConf, batchConf *BatchConf, initOp chainInitO
 		}
 		ledgermgmtInitializer.Config.StateDBConfig.StateDatabase = ledger.Couchbase
 		ledgermgmtInitializer.Config.StateDBConfig.Couchbase = &ledger.CouchbaseConfig{
-			Address:           couchbaseAddr,
-			IsCapellaInstance: true,
+			Address:            couchbaseAddr,
+			IsCapellaInstance:  true,
+			RedoLogPath:        filepath.Join(dataDir, "couchbaseRedologs"),
+			UserCacheSizeMBs:   500,
+			MaxBatchUpdateSize: 500,
 		}
 	}
 	ledgerMgr := ledgermgmt.NewLedgerMgr(ledgermgmtInitializer)

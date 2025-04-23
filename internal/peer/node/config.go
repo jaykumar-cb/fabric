@@ -57,6 +57,7 @@ func ledgerConfig() *ledger.Config {
 		StateDBConfig: &ledger.StateDBConfig{
 			StateDatabase: viper.GetString("ledger.state.stateDatabase"),
 			CouchDB:       &ledger.CouchDBConfig{},
+			Couchbase:     &ledger.CouchbaseConfig{},
 		},
 		PrivateDataConfig: &ledger.PrivateDataConfig{
 			MaxBatchSize:                        collElgProcMaxDbBatchSize,
@@ -91,12 +92,16 @@ func ledgerConfig() *ledger.Config {
 
 	if conf.StateDBConfig.StateDatabase == ledger.Couchbase {
 		conf.StateDBConfig.Couchbase = &ledger.CouchbaseConfig{
-			Address:           viper.GetString("ledger.state.couchbaseConfig.couchbaseAddress"),
-			IsCapellaInstance: viper.GetBool("ledger.state.couchbaseConfig.isCapellaInstance"),
-			Username:          viper.GetString("ledger.state.couchbaseConfig.username"),
-			Password:          viper.GetString("ledger.state.couchbaseConfig.password"),
-			Bucket:            viper.GetString("ledger.state.couchbaseConfig.bucket"),
-			Scope:             viper.GetString("ledger.state.couchbaseConfig.scope"),
+			Address:            viper.GetString("ledger.state.couchbaseConfig.couchbaseAddress"),
+			IsCapellaInstance:  viper.GetBool("ledger.state.couchbaseConfig.isCapellaInstance"),
+			Username:           viper.GetString("ledger.state.couchbaseConfig.username"),
+			Password:           viper.GetString("ledger.state.couchbaseConfig.password"),
+			Bucket:             viper.GetString("ledger.state.couchbaseConfig.bucket"),
+			Scope:              viper.GetString("ledger.state.couchbaseConfig.scope"),
+			InternalQueryLimit: internalQueryLimit,
+			MaxBatchUpdateSize: maxBatchUpdateSize,
+			RedoLogPath:        filepath.Join(ledgersDataRootDir, "couchbaseRedoLogs"),
+			UserCacheSizeMBs:   viper.GetInt("ledger.state.couchbaseConfig.cacheSize"),
 		}
 	}
 	return conf

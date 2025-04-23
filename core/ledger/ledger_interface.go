@@ -124,18 +124,19 @@ type CouchbaseConfig struct {
 	//RequestTimeout time.Duration
 	//// InternalQueryLimit is the maximum number of records to return internally
 	//// when querying CouchDB.
-	//InternalQueryLimit int
+	InternalQueryLimit int
 	//// MaxBatchUpdateSize is the maximum number of records to included in Couchbase
 	//// bulk update operations.
-	//MaxBatchUpdateSize int
+	MaxBatchUpdateSize int
 	//// CreateGlobalChangesDB determines whether or not to create the "_global_changes"
 	//// system database.
 	//CreateGlobalChangesDB bool
+	RedoLogPath string
 	//// UserCacheSizeMBs denotes the user specified maximum mega bytes (MB) to be allocated
 	//// for the user state cache (i.e., all chaincodes deployed by the user). Note that
 	//// UserCacheSizeMBs needs to be a multiple of 32 MB. If it is not a multiple of 32 MB,
 	//// the peer would round the size to the next multiple of 32 MB.
-	//UserCacheSizeMBs int
+	UserCacheSizeMBs int
 }
 
 // PrivateDataConfig is a structure used to configure a private data storage provider.

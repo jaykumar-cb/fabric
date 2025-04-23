@@ -6,6 +6,8 @@ import (
 	"github.com/couchbase/gocb/v2"
 	"github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"regexp"
 	"strings"
 
@@ -223,4 +225,25 @@ func printDocumentIds(documentPointers []*couchbaseDoc) (string, error) {
 	result := strings.Join(documentIds, ",")
 	logger.Infof("Exiting printDocumentIds() with document IDs: %s", result)
 	return result, nil
+}
+
+func constructCacheValue(v *statedb.VersionedValue) *CacheValueCouchbase {
+	return &CacheValueCouchbase{
+		Version:  v.Version.ToBytes(),
+		Value:    v.Value,
+		Metadata: v.Metadata,
+	}
+}
+
+func constructVersionedValue(cv *CacheValueCouchbase) (*statedb.VersionedValue, error) {
+	height, _, err := version.NewHeightFromBytes(cv.Version)
+	if err != nil {
+		return nil, err
+	}
+
+	return &statedb.VersionedValue{
+		Value:    cv.Value,
+		Version:  height,
+		Metadata: cv.Metadata,
+	}, nil
 }

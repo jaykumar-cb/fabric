@@ -131,9 +131,10 @@ func (dbclient *couchbaseDatabase) readDoc(key string) (*couchbaseDoc, error) {
 
 	err = document.Content(&couchbaseDoc)
 	if err != nil {
+		couchbaseLogger.Errorf("[%s] Error reading key: %s, Error: %s", dbclient.dbName, key, err)
 		return nil, err
 	}
-	couchbaseLogger.Infof("[%s] readDoc() for key=%s, value=%s", dbclient.dbName, key, couchbaseDoc)
+	//couchbaseLogger.Infof("[%s] readDoc() for key=%s, value=%s", dbclient.dbName, key, couchbaseDoc)
 	couchbaseLogger.Infof("[%s] Exiting readDoc() for key=%s", dbclient.dbName, key)
 	return &couchbaseDoc, nil
 }
@@ -257,7 +258,7 @@ func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDo
 	couchbaseLogger.Infof("[%s] Entering batchUpdateDocuments()", dbName)
 	var response []*batchUpdateResponse
 	// TODO use configuration file for this Refer: https://docs.couchbase.com/go-sdk/current/howtos/concurrent-async-apis.html#sizing-batches-examples
-	batches, err := buildBatches(documents, 10)
+	batches, err := buildUpdateBatches(documents, 1000)
 	if err != nil {
 		return nil, err
 	}
@@ -292,21 +293,95 @@ func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDo
 	return response, nil
 }
 
-func buildBatches(documents []*couchbaseDoc, numBatches int) (map[int][]gocb.BulkOp, error) {
-	couchbaseLogger.Infof("Entering buildBatches()")
-	batches := make(map[int][]gocb.BulkOp)
-	for i, document := range documents {
-		//var docMetadata docMetadata
-		_, ok := batches[i%numBatches]
-		if !ok {
-			batches[i%numBatches] = []gocb.BulkOp{}
+func (dbclient *couchbaseDatabase) batchGetDocument(keys []string) ([]*couchbaseDoc, error) {
+	dbName := dbclient.dbName
+	couchbaseLogger.Infof("[%s] Entering batchGetDocument()", dbName)
+	responses := make([]*couchbaseDoc, 0)
+	batches, err := buildGetBatches(keys, 1000)
+	if err != nil {
+		return nil, err
+	}
+	couchbaseLogger.Infof("Batching %d documents into %d batches", len(keys), len(batches))
+	for _, batch := range batches {
+		err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(batch, nil)
+		if err != nil {
+			log.Println(err)
 		}
-		batches[i%numBatches] = append(batches[i%numBatches], &gocb.UpsertOp{
+
+		// Be sure to check each individual operation for errors too.
+		for _, op := range batch {
+			response := make(couchbaseDoc)
+
+			getOp := op.(*gocb.GetOp)
+
+			if getOp.Err != nil {
+				if strings.Contains(getOp.Err.Error(), "document not found") {
+					couchbaseLogger.Infof("Document with ID %s not found", getOp.ID)
+					continue
+				} else {
+					couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, getOp.Err)
+					return nil, err
+				}
+			}
+
+			err := getOp.Result.Content(&response)
+			if err != nil {
+				couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, err)
+				return nil, err
+			}
+			responses = append(responses, &response)
+			if getOp.Err != nil {
+				couchbaseLogger.Infof("Error upserting document with ID %s: %v", getOp.ID, getOp.Err)
+			}
+		}
+	}
+	return responses, nil
+}
+
+func buildGetBatches(keys []string, documentsPerBatch int) ([][]gocb.BulkOp, error) {
+	couchbaseLogger.Infof("Entering buildGetBatches()")
+
+	var batches [][]gocb.BulkOp
+	var currentBatch []gocb.BulkOp
+
+	for i, key := range keys {
+		op := &gocb.GetOp{
+			ID: key,
+		}
+		currentBatch = append(currentBatch, op)
+
+		// If batch is full or it's the last document, finalize the batch
+		if len(currentBatch) == documentsPerBatch || i == len(keys)-1 {
+			batches = append(batches, currentBatch)
+			currentBatch = nil
+		}
+	}
+
+	couchbaseLogger.Infof("Exiting buildGetBatches() with %d batches", len(batches))
+	return batches, nil
+}
+
+func buildUpdateBatches(documents []*couchbaseDoc, documentsPerBatch int) ([][]gocb.BulkOp, error) {
+	couchbaseLogger.Infof("Entering buildUpdateBatches()")
+
+	var batches [][]gocb.BulkOp
+	var currentBatch []gocb.BulkOp
+
+	for i, document := range documents {
+		op := &gocb.UpsertOp{
 			ID:    (*document)[idField].(string),
 			Value: document,
-		})
+		}
+		currentBatch = append(currentBatch, op)
+
+		// If batch is full or it's the last document, finalize the batch
+		if len(currentBatch) == documentsPerBatch || i == len(documents)-1 {
+			batches = append(batches, currentBatch)
+			currentBatch = nil
+		}
 	}
-	couchbaseLogger.Infof("Exiting buildBatches()")
+
+	couchbaseLogger.Infof("Exiting buildUpdateBatches() with %d batches", len(batches))
 	return batches, nil
 }
 

@@ -51,7 +51,7 @@ func NewVersionedDBProvider(config *ledger.CouchbaseConfig, sysNamespaces []stri
 	//	return nil, err
 	//}
 	// Todo add RedoLogPath to config
-	p, err := newRedoLoggerProvider("/Users/jay.kumar/Documents/Work/fabric")
+	p, err := newRedoLoggerProvider(config.RedoLogPath)
 	if err != nil {
 		couchbaseLogger.Infof("Error while initializing RedoLogger, exiting NewVersionedDBProvider() with error")
 		return nil, err
@@ -86,6 +86,7 @@ func (provider *VersionedDBProvider) GetDBHandle(dbName string, namespaceProvide
 		provider.couchbaseInstance,
 		provider.redoLoggerProvider.newRedoLogger(dbName),
 		dbName,
+		provider.cache,
 		namespaceProvider,
 	)
 	if err != nil {
@@ -211,13 +212,14 @@ type VersionedDB struct {
 	namespaceDBs      map[string]*couchbaseDatabase // One database per namespace.
 	channelMetadata   *channelMetadata              // Store channel name and namespaceDBInfo
 	//committedDataCache *versionsCache            // Used as a local cache during bulk processing of a block.
-	verCacheLock sync.RWMutex
-	mux          sync.RWMutex
-	//cache        *cache
+	committedDataCache *versionsCache // Used as a local cache during bulk processing of a block.
+	verCacheLock       sync.RWMutex
+	mux                sync.RWMutex
+	cache              *cache
 }
 
 // newVersionedDB constructs an instance of VersionedDB
-func newVersionedDB(couchbaseInstance *couchbaseInstance, redoLogger *redoLogger, dbName string, nsProvider statedb.NamespaceProvider) (*VersionedDB, error) {
+func newVersionedDB(couchbaseInstance *couchbaseInstance, redoLogger *redoLogger, dbName string, cache *cache, nsProvider statedb.NamespaceProvider) (*VersionedDB, error) {
 	logger.Infof("Entering newVersionedDB() with database name: %s", dbName)
 	// CreateCouchDatabase creates a Couchbase database object, as well as the underlying database if it does not exist
 	chainName := dbName
@@ -234,6 +236,7 @@ func newVersionedDB(couchbaseInstance *couchbaseInstance, redoLogger *redoLogger
 		metadataDB:        metadataDB,
 		chainName:         chainName,
 		namespaceDBs:      namespaceDBMap,
+		cache:             cache,
 	}
 
 	logger.Infof("chain [%s]: checking for redolog record", chainName)
@@ -249,7 +252,6 @@ func newVersionedDB(couchbaseInstance *couchbaseInstance, redoLogger *redoLogger
 		return nil, err
 	}
 
-	// TODO: update the following line
 	isNewDB := savepoint == nil
 	if err = vdb.initChannelMetadata(isNewDB, nsProvider); err != nil {
 		logger.Infof("Exiting newVersionedDB() with error: %s", err)
@@ -546,12 +548,12 @@ func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 
 			updatesToBatch = append(updatesToBatch, document)
 		}
-		go func() {
-			if _, err := db.batchUpdateDocuments(updatesToBatch); err != nil {
-				logger.Infof("Exiting ApplyUpdates() with error: %s", err)
-				return
-			}
-		}()
+
+		if _, err := db.batchUpdateDocuments(updatesToBatch); err != nil {
+			logger.Infof("Exiting ApplyUpdates() with error: %s", err)
+			return err
+		}
+
 	}
 	if err := vdb.recordSavepoint(height); err != nil {
 		logger.Errorf("Error during recordSavepoint: %s", err.Error())
@@ -752,6 +754,23 @@ func (vdb *VersionedDB) readFromDB(namespace, key string) (*keyValue, error) {
 
 func (vdb *VersionedDB) GetState(namespace, key string) (*statedb.VersionedValue, error) {
 	logger.Infof("Entering GetState() with namespace: %s, key: %s", namespace, key)
+	cacheEnabled := vdb.cache.enabled(namespace)
+	if cacheEnabled {
+		cv, err := vdb.cache.getState(vdb.chainName, namespace, key)
+		if err != nil {
+			logger.Infof("Exiting GetState() with error from cache: %s", err)
+			return nil, err
+		}
+		if cv != nil {
+			vv, err := constructVersionedValue(cv)
+			if err != nil {
+				logger.Infof("Exiting GetState() with error constructing value: %s", err)
+				return nil, err
+			}
+			logger.Infof("Exiting GetState() with cached value, version: %v", vv.Version)
+			return vv, nil
+		}
+	}
 	kv, err := vdb.readFromDB(namespace, key)
 
 	if kv == nil {
@@ -762,6 +781,14 @@ func (vdb *VersionedDB) GetState(namespace, key string) (*statedb.VersionedValue
 	if err != nil {
 		logger.Infof("Exiting GetState() with error: %s", err)
 		return nil, err
+	}
+
+	if cacheEnabled {
+		cacheValue := constructCacheValue(kv.VersionedValue)
+		if err := vdb.cache.putState(vdb.chainName, namespace, key, cacheValue); err != nil {
+			logger.Infof("Exiting GetState() with error storing in cache: %s", err)
+			return nil, err
+		}
 	}
 	logger.Infof("Exiting GetState() with value: %v", kv.VersionedValue)
 	return kv.VersionedValue, nil
@@ -816,6 +843,97 @@ func (vdb *VersionedDB) GetDBType() string {
 	logger.Infof("Entering GetDBType()")
 	logger.Infof("Exiting GetDBType() with value: couchbase")
 	return "couchbase"
+}
+
+//////////////SUPPORT_FOR_BULK_OPTIMIZABLE///////////////////////
+
+func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) error {
+	logger.Infof("Entering LoadCommittedVersions() with %d keys", len(keys))
+	missingKeys := map[string][]string{}
+	committedDataCache := newVersionCache()
+	for _, compositeKey := range keys {
+		ns, key := compositeKey.Namespace, compositeKey.Key
+		committedDataCache.setVerAndRev(ns, key, nil)
+		logger.Infof("Load into version cache: %s~%s", ns, key)
+
+		if !vdb.cache.enabled(ns) {
+			missingKeys[ns] = append(missingKeys[ns], key)
+			continue
+		}
+		cv, err := vdb.cache.getState(vdb.chainName, ns, key)
+		if err != nil {
+			logger.Infof("Exiting LoadCommittedVersions() with error: %s", err)
+			return err
+		}
+		if cv == nil {
+			missingKeys[ns] = append(missingKeys[ns], key)
+			continue
+		}
+		vv, err := constructVersionedValue(cv)
+		if err != nil {
+			logger.Infof("Exiting LoadCommittedVersions() with error: %s", err)
+			return err
+		}
+		committedDataCache.setVerAndRev(ns, key, vv.Version)
+	}
+
+	nsMetadataMap, err := vdb.retrieveMetadata(missingKeys)
+	logger.Infof("missingKeys=%s", missingKeys)
+	logger.Infof("nsMetadataMap=%v", nsMetadataMap)
+	if err != nil {
+		logger.Infof("Exiting LoadCommittedVersions() with error: %s", err)
+		return err
+	}
+	for ns, nsMetadata := range nsMetadataMap {
+		for _, keyMetadata := range nsMetadata {
+			kv, err := couchbaseDocToKeyValue(keyMetadata)
+			if err != nil {
+				logger.Infof("Exiting LoadCommittedVersions() with error: %s", err)
+				return err
+			}
+			committedDataCache.setVerAndRev(ns, kv.key, kv.Version)
+		}
+	}
+	vdb.verCacheLock.Lock()
+	defer vdb.verCacheLock.Unlock()
+	vdb.committedDataCache = committedDataCache
+	logger.Infof("Exiting LoadCommittedVersions() successfully")
+	return nil
+}
+
+func (vdb *VersionedDB) retrieveMetadata(missingKeys map[string][]string) (map[string][]*couchbaseDoc, error) {
+	result := make(map[string][]*couchbaseDoc)
+	for ns, keys := range missingKeys {
+		db, err := vdb.getNamespaceDBHandle(ns)
+		if err != nil {
+			logger.Infof("Exiting LoadCommittedVersions() with error: %s", err)
+			return nil, err
+		}
+		documents, err := db.batchGetDocument(keys)
+		result[ns] = documents
+	}
+	return result, nil
+}
+
+// GetCachedVersion returns version from cache. `LoadCommittedVersions` function populates the cache
+func (vdb *VersionedDB) GetCachedVersion(namespace string, key string) (*version.Height, bool) {
+	logger.Infof("Entering GetCachedVersion() with namespace: %s, key: %s", namespace, key)
+	logger.Infof("Retrieving cached version: %s~%s", namespace, key)
+	vdb.verCacheLock.RLock()
+	defer vdb.verCacheLock.RUnlock()
+	version, exists := vdb.committedDataCache.getVersion(namespace, key)
+	logger.Infof("Exiting GetCachedVersion() with version: %v, exists: %t", version, exists)
+	return version, exists
+}
+
+// ClearCachedVersions clears committedVersions and revisionNumbers
+func (vdb *VersionedDB) ClearCachedVersions() {
+	logger.Infof("Entering ClearCachedVersions()")
+	logger.Infof("Clear Cache")
+	vdb.verCacheLock.Lock()
+	defer vdb.verCacheLock.Unlock()
+	vdb.committedDataCache = newVersionCache()
+	logger.Infof("Exiting ClearCachedVersions()")
 }
 
 ////////////// QUERY_SCANNER_SECTION_STARTS//////////////////////

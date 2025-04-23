@@ -207,7 +207,7 @@ func encodeSavepoint(height *version.Height) (*couchbaseDoc, error) {
 
 func decodeSavepoint(couchbaseDoc *couchbaseDoc) (*version.Height, error) {
 	savepointDoc := &couchbaseSavepointData{}
-	savepointDoc.TxNum = (*couchbaseDoc)["TxNum"].(uint64)
+	savepointDoc.TxNum = uint64((*couchbaseDoc)["TxNum"].(float64))
 	return &version.Height{BlockNum: savepointDoc.BlockNum, TxNum: savepointDoc.TxNum}, nil
 }
 
@@ -222,14 +222,41 @@ func decodeSavepoint(couchbaseDoc *couchbaseDoc) (*version.Height, error) {
 //}
 
 func decodeChannelMetadata(couchbaseDoc *couchbaseDoc) (*channelMetadata, error) {
-	metadataDoc := &channelMetadata{}
-	metadataDoc.ChannelName = (*couchbaseDoc)["ChannelName"].(string)
-	metadataDoc.NamespaceDBsInfo = (*couchbaseDoc)["NamespaceDBsInfo"].(map[string]*namespaceDBInfo)
-	//if err := json.Unmarshal(couchbaseDoc.jsonValue, &metadataDoc); err != nil {
-	//	err = errors.Wrap(err, "failed to unmarshal channel metadata")
-	//	logger.Errorf("%+v", err)
-	//	return nil, err
-	//}
+	couchbaseLogger.Infof("Entering decodeChannelMetadata() with doc: %v", couchbaseDoc)
+
+	channelName, ok := (*couchbaseDoc)["ChannelName"].(string)
+	if !ok {
+		return nil, fmt.Errorf("ChannelName is not a string")
+	}
+
+	rawNamespaceInfo, ok := (*couchbaseDoc)["NamespaceDBsInfo"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("NamespaceDBsInfo is not a map[string]interface{}")
+	}
+
+	namespaceInfo := make(map[string]*namespaceDBInfo)
+	for k, v := range rawNamespaceInfo {
+		valMap, ok := v.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("value for key %s is not a map[string]interface{}", k)
+		}
+
+		ns := &namespaceDBInfo{}
+		if namespace, ok := valMap["Namespace"].(string); ok {
+			ns.Namespace = namespace
+		}
+		if dbName, ok := valMap["DBName"].(string); ok {
+			ns.DBName = dbName
+		}
+		namespaceInfo[k] = ns
+	}
+
+	metadataDoc := &channelMetadata{
+		ChannelName:      channelName,
+		NamespaceDBsInfo: namespaceInfo,
+	}
+
+	couchbaseLogger.Infof("Exiting decodeChannelMetadata() with metadatadoc: %v", metadataDoc)
 	return metadataDoc, nil
 }
 

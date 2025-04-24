@@ -39,8 +39,10 @@ func createCouchbaseInstance(config *ledger.CouchbaseConfig) (*couchbaseInstance
 		},
 	}
 
-	if err := options.ApplyProfile(gocb.ClusterConfigProfileWanDevelopment); err != nil {
-		return nil, err
+	if config.IsCapellaInstance {
+		if err := options.ApplyProfile(gocb.ClusterConfigProfileWanDevelopment); err != nil {
+			return nil, err
+		}
 	}
 
 	client, err := gocb.Connect(address, options)

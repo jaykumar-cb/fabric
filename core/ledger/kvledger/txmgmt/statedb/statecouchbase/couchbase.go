@@ -6,9 +6,9 @@ import (
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/pkg/errors"
-	"go.uber.org/zap/zapcore"
 	"log"
 	"strings"
+	"sync"
 )
 
 var couchbaseLogger = flogging.MustGetLogger("couchbase")
@@ -256,86 +256,125 @@ func (dbclient *couchbaseDatabase) deleteDocument(key string) error {
 func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDoc) ([]*batchUpdateResponse, error) {
 	dbName := dbclient.dbName
 	couchbaseLogger.Infof("[%s] Entering batchUpdateDocuments()", dbName)
-	var response []*batchUpdateResponse
+
 	// TODO use configuration file for this Refer: https://docs.couchbase.com/go-sdk/current/howtos/concurrent-async-apis.html#sizing-batches-examples
 	batches, err := buildUpdateBatches(documents, 1000)
+
+	var (
+		response []*batchUpdateResponse
+		respMx   sync.Mutex
+		batchWG  sync.WaitGroup
+		errsChan = make(chan error, len(batches))
+	)
+	defer close(errsChan)
+
+	batchWG.Add(len(batches))
+
 	if err != nil {
 		return nil, err
 	}
 	for _, batch := range batches {
-		err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(batch, nil)
-		if err != nil {
-			log.Println(err)
-		}
-
-		// Be sure to check each individual operation for errors too.
-		for _, op := range batch {
-			upsertOp := op.(*gocb.UpsertOp)
-			// TODO check the id here is it the document ID ? This is possibly a bug.
-			response = append(response, &batchUpdateResponse{
-				ID: upsertOp.ID,
-				Ok: upsertOp.Err == nil,
-			})
-			if upsertOp.Err != nil {
-				couchbaseLogger.Infof("Error upserting document with ID %s: %v", upsertOp.ID, upsertOp.Err)
+		go func(batch []gocb.BulkOp) {
+			defer batchWG.Done()
+			err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(batch, nil)
+			if err != nil {
+				log.Println(err)
 			}
-		}
+
+			// Be sure to check each individual operation for errors too.
+			for _, op := range batch {
+				upsertOp := op.(*gocb.UpsertOp)
+				// TODO check the id here is it the document ID ? This is possibly a bug.
+
+				respMx.Lock()
+				response = append(response, &batchUpdateResponse{
+					ID: upsertOp.ID,
+					Ok: upsertOp.Err == nil,
+				})
+				respMx.Unlock()
+			}
+		}(batch)
 	}
-	if couchbaseLogger.IsEnabledFor(zapcore.DebugLevel) {
-		documentIdsString, err := printDocumentIds(documents)
-		if err == nil {
-			couchbaseLogger.Infof("[%s] Entering BatchUpdateDocuments()  document ids=[%s]", dbName, documentIdsString)
-		} else {
-			couchbaseLogger.Infof("[%s] Entering BatchUpdateDocuments()  Could not print document ids due to error: %+v", dbName, err)
-		}
+
+	batchWG.Wait()
+
+	select {
+	case err := <-errsChan:
+		couchbaseLogger.Infof("[%s] Exiting batchUpdateDocuments() with error", dbclient.dbName)
+		return nil, errors.WithStack(err)
+	default:
+		couchbaseLogger.Infof("[%s] Exiting batchUpdateDocuments()", dbName)
+		return response, nil
 	}
-	couchbaseLogger.Infof("[%s] Exiting batchUpdateDocuments()", dbName)
-	return response, nil
 }
 
 func (dbclient *couchbaseDatabase) batchGetDocument(keys []string) ([]*couchbaseDoc, error) {
 	dbName := dbclient.dbName
 	couchbaseLogger.Infof("[%s] Entering batchGetDocument()", dbName)
-	responses := make([]*couchbaseDoc, 0)
+
 	batches, err := buildGetBatches(keys, 1000)
 	if err != nil {
 		return nil, err
 	}
 	couchbaseLogger.Infof("Batching %d documents into %d batches", len(keys), len(batches))
+
+	var (
+		responses []*couchbaseDoc
+		respMx    sync.Mutex
+		batchWG   sync.WaitGroup
+		errsChan  = make(chan error, len(batches))
+	)
+
+	batchWG.Add(len(batches))
+	defer close(errsChan)
+
 	for _, batch := range batches {
-		err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(batch, nil)
-		if err != nil {
-			log.Println(err)
-		}
-
-		// Be sure to check each individual operation for errors too.
-		for _, op := range batch {
-			response := make(couchbaseDoc)
-
-			getOp := op.(*gocb.GetOp)
-
-			if getOp.Err != nil {
-				if strings.Contains(getOp.Err.Error(), "document not found") {
-					couchbaseLogger.Infof("Document with ID %s not found", getOp.ID)
-					continue
-				} else {
-					couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, getOp.Err)
-					return nil, err
-				}
-			}
-
-			err := getOp.Result.Content(&response)
+		go func(batch []gocb.BulkOp) {
+			defer batchWG.Done()
+			err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(batch, nil)
 			if err != nil {
-				couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, err)
-				return nil, err
+				log.Println(err)
 			}
-			responses = append(responses, &response)
-			if getOp.Err != nil {
-				couchbaseLogger.Infof("Error upserting document with ID %s: %v", getOp.ID, getOp.Err)
+			var responseWG sync.WaitGroup
+			responseWG.Add(len(batch))
+			for _, op := range batch {
+				response := make(couchbaseDoc)
+
+				getOp := op.(*gocb.GetOp)
+
+				if getOp.Err != nil {
+					if strings.Contains(getOp.Err.Error(), "document not found") {
+						couchbaseLogger.Infof("Document with ID %s not found", getOp.ID)
+						continue
+					} else {
+						couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, getOp.Err)
+						errsChan <- err
+					}
+				}
+
+				err := getOp.Result.Content(&response)
+				if err != nil {
+					couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, err)
+					errsChan <- err
+				}
+
+				respMx.Lock()
+				responses = append(responses, &response)
+				respMx.Unlock()
 			}
-		}
+		}(batch)
+
 	}
-	return responses, nil
+
+	batchWG.Wait()
+
+	select {
+	case err := <-errsChan:
+		couchbaseLogger.Infof("[%s] Exiting batchGetDocument() with error", dbName)
+		return nil, errors.WithStack(err)
+	default:
+		return responses, nil
+	}
 }
 
 func buildGetBatches(keys []string, documentsPerBatch int) ([][]gocb.BulkOp, error) {

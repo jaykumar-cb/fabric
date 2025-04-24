@@ -790,7 +790,8 @@ func (vdb *VersionedDB) GetState(namespace, key string) (*statedb.VersionedValue
 			return nil, err
 		}
 	}
-	logger.Infof("Exiting GetState() with value: %v", kv.VersionedValue)
+	logger.Infof("Exiting GetState()")
+	//logger.Infof("Exiting GetState() with value: %v", kv.VersionedValue)
 	return kv.VersionedValue, nil
 }
 

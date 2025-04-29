@@ -33,6 +33,9 @@ func createCouchbaseInstance(config *ledger.CouchbaseConfig) (*couchbaseInstance
 	address := config.Address
 
 	options := gocb.ClusterOptions{
+		SecurityConfig: gocb.SecurityConfig{
+			TLSSkipVerify: true,
+		},
 		Authenticator: gocb.PasswordAuthenticator{
 			Username: config.Username,
 			Password: config.Password,
@@ -40,6 +43,7 @@ func createCouchbaseInstance(config *ledger.CouchbaseConfig) (*couchbaseInstance
 	}
 
 	if config.IsCapellaInstance {
+		fmt.Printf("Applying ClusterConfigProfileWanDevelopment\n")
 		if err := options.ApplyProfile(gocb.ClusterConfigProfileWanDevelopment); err != nil {
 			return nil, err
 		}
@@ -52,7 +56,7 @@ func createCouchbaseInstance(config *ledger.CouchbaseConfig) (*couchbaseInstance
 
 	bucket := client.Bucket(config.Bucket)
 
-	err = bucket.WaitUntilReady(5*time.Second, nil)
+	err = bucket.WaitUntilReady(30*time.Second, nil)
 	if err != nil {
 		return nil, err
 	}

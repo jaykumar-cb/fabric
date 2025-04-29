@@ -2,6 +2,7 @@ package statecouchbase
 
 import (
 	"encoding/json"
+	"github.com/couchbase/gocb/v2"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/internal/version"
@@ -215,6 +216,7 @@ type VersionedDB struct {
 	committedDataCache *versionsCache // Used as a local cache during bulk processing of a block.
 	verCacheLock       sync.RWMutex
 	mux                sync.RWMutex
+	redoLogger         *redoLogger
 	cache              *cache
 }
 
@@ -237,6 +239,7 @@ func newVersionedDB(couchbaseInstance *couchbaseInstance, redoLogger *redoLogger
 		chainName:         chainName,
 		namespaceDBs:      namespaceDBMap,
 		cache:             cache,
+		redoLogger:        redoLogger,
 	}
 
 	logger.Infof("chain [%s]: checking for redolog record", chainName)
@@ -415,6 +418,13 @@ func (vdb *VersionedDB) recordSavepoint(height *version.Height) error {
 
 func (vdb *VersionedDB) GetVersion(namespace string, key string) (*version.Height, error) {
 	logger.Infof("Entering GetVersion() with namespace: %s, key: %s", namespace, key)
+
+	version, keyFound := vdb.GetCachedVersion(namespace, key)
+	if keyFound {
+		logger.Infof("Exiting GetVersion() with cached version: %v", version)
+		return version, nil
+	}
+
 	vv, err := vdb.GetState(namespace, key)
 	if err != nil {
 		logger.Infof("Exiting GetVersion() with error: %s", err)
@@ -523,45 +533,71 @@ func (vdb *VersionedDB) ExecuteQueryWithPagination(namespace, query, bookmark st
 
 func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version.Height) error {
 	logger.Infof("Entering ApplyUpdates() with height: %v", height)
+	if height != nil && batch.ContainsPostOrderWrites {
+		// height is passed nil when committing missing private data for previously committed blocks
+		r := &redoRecord{
+			UpdateBatch: batch,
+			Version:     height,
+		}
+		if err := vdb.redoLogger.persist(r); err != nil {
+			logger.Infof("Exiting ApplyUpdates() with error persisting to redoLogger: %s", err)
+			return err
+		}
+	}
+
+	var batchWG sync.WaitGroup
+	batchWG.Add(len(batch.GetUpdatedNamespaces()))
+	var errsChan = make(chan error, len(batch.GetUpdatedNamespaces()))
+	defer close(errsChan)
+
 	for _, ns := range batch.GetUpdatedNamespaces() {
-		updates := batch.GetUpdates(ns)
-		db, err := vdb.getNamespaceDBHandle(ns)
-		if err != nil {
-			logger.Infof("Exiting ApplyUpdates() with error: %s", err)
-			return err
-		}
-		var updatesToBatch []*couchbaseDoc
-		for k, vv := range updates {
-			document, err := keyValToCouchbaseDoc(&keyValue{k, vv})
+		go func(ns string) {
+			defer batchWG.Done()
+			updates := batch.GetUpdates(ns)
+			db, err := vdb.getNamespaceDBHandle(ns)
 			if err != nil {
-				return err
+				logger.Infof("Exiting ApplyUpdates() with error: %s", err)
+				errsChan <- err
 			}
-			if (*document)[deletedField] != nil && (*document)[deletedField] == true {
-				couchbaseLogger.Infof("ApplyUpdates() deleteing document with key: %s", k)
-				// TODO: Efficient deletion, do in batch or build a query
-				err := db.deleteDocument(k)
+			var updatesToBatch []*couchbaseDoc
+			for k, vv := range updates {
+				document, err := keyValToCouchbaseDoc(&keyValue{k, vv})
 				if err != nil {
-					return err
+					errsChan <- err
 				}
-				continue
+				if (*document)[deletedField] != nil && (*document)[deletedField] == true {
+					couchbaseLogger.Infof("ApplyUpdates() deleteing document with key: %s", k)
+					// TODO: Efficient deletion, do in batch or build a query
+					err := db.deleteDocument(k)
+					if err != nil {
+						errsChan <- err
+					}
+					continue
+				}
+
+				updatesToBatch = append(updatesToBatch, document)
 			}
+			if err := db.batchUpdateDocuments(updatesToBatch); err != nil {
+				logger.Infof("Exiting ApplyUpdates() with error: %s", err)
+				errsChan <- err
+			}
+		}(ns)
+	}
 
-			updatesToBatch = append(updatesToBatch, document)
-		}
+	batchWG.Wait()
 
-		if _, err := db.batchUpdateDocuments(updatesToBatch); err != nil {
-			logger.Infof("Exiting ApplyUpdates() with error: %s", err)
+	select {
+	case err := <-errsChan:
+		return errors.WithStack(err)
+	default:
+		if err := vdb.recordSavepoint(height); err != nil {
+			logger.Errorf("Error during recordSavepoint: %s", err.Error())
+			logger.Infof("Exiting ApplyUpdates() with recordSavepoint error: %s", err)
 			return err
 		}
-
+		logger.Infof("Exiting ApplyUpdates()")
+		return nil
 	}
-	if err := vdb.recordSavepoint(height); err != nil {
-		logger.Errorf("Error during recordSavepoint: %s", err.Error())
-		logger.Infof("Exiting ApplyUpdates() with recordSavepoint error: %s", err)
-		return err
-	}
-	logger.Infof("Exiting ApplyUpdates()")
-	return nil
 }
 
 func (vdb *VersionedDB) GetLatestSavePoint() (*version.Height, error) {
@@ -850,7 +886,7 @@ func (vdb *VersionedDB) GetDBType() string {
 
 func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) error {
 	logger.Infof("Entering LoadCommittedVersions() with %d keys", len(keys))
-	missingKeys := map[string][]string{}
+	missingKeys := make(map[string][]gocb.BulkOp)
 	committedDataCache := newVersionCache()
 	for _, compositeKey := range keys {
 		ns, key := compositeKey.Namespace, compositeKey.Key
@@ -858,7 +894,10 @@ func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) erro
 		logger.Infof("Load into version cache: %s~%s", ns, key)
 
 		if !vdb.cache.enabled(ns) {
-			missingKeys[ns] = append(missingKeys[ns], key)
+			missingKeys[ns] = append(missingKeys[ns],
+				&gocb.GetOp{
+					ID: key,
+				})
 			continue
 		}
 		cv, err := vdb.cache.getState(vdb.chainName, ns, key)
@@ -867,7 +906,9 @@ func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) erro
 			return err
 		}
 		if cv == nil {
-			missingKeys[ns] = append(missingKeys[ns], key)
+			missingKeys[ns] = append(missingKeys[ns], &gocb.GetOp{
+				ID: key,
+			})
 			continue
 		}
 		vv, err := constructVersionedValue(cv)
@@ -900,20 +941,6 @@ func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) erro
 	vdb.committedDataCache = committedDataCache
 	logger.Infof("Exiting LoadCommittedVersions() successfully")
 	return nil
-}
-
-func (vdb *VersionedDB) retrieveMetadata(missingKeys map[string][]string) (map[string][]*couchbaseDoc, error) {
-	result := make(map[string][]*couchbaseDoc)
-	for ns, keys := range missingKeys {
-		db, err := vdb.getNamespaceDBHandle(ns)
-		if err != nil {
-			logger.Infof("Exiting LoadCommittedVersions() with error: %s", err)
-			return nil, err
-		}
-		documents, err := db.batchGetDocument(keys)
-		result[ns] = documents
-	}
-	return result, nil
 }
 
 // GetCachedVersion returns version from cache. `LoadCommittedVersions` function populates the cache

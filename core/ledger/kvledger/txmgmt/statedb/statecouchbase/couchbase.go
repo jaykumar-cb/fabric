@@ -9,6 +9,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 )
 
 var couchbaseLogger = flogging.MustGetLogger("couchbase")
@@ -92,9 +93,35 @@ func (dbclient *couchbaseDatabase) createDatabase() error {
 	couchbaseLogger.Infof("[%s] Entering CreateDatabase()", dbclient.dbName)
 
 	// Create the collection
-	err := dbclient.couchbaseInstance.bucket.CollectionsV2().CreateCollection(dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, nil, nil)
+	err := dbclient.couchbaseInstance.bucket.CollectionsV2().CreateCollection(dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, nil, &gocb.CreateCollectionOptions{
+		Timeout: 20 * time.Second,
+	})
+
 	if err != nil {
 		couchbaseLogger.Errorf("[%s] Error creating collection: %s", dbclient.dbName, err)
+		return err
+	}
+
+	//IndexCreationQuery, _, _ := populateQuery("CREATE PRIMARY INDEX ON {{ .Source }}", 0, "", dbclient)
+	//couchbaseLogger.Infof("Index Query: %s", IndexCreationQuery)
+	//_, err = dbclient.queryDocuments(IndexCreationQuery)
+	//if err != nil {
+	//	couchbaseLogger.Errorf("[%s] Error creating index: %s", dbclient.dbName, err)
+	//	return err
+	//}
+
+	err = dbclient.couchbaseInstance.cluster.QueryIndexes().CreatePrimaryIndex(
+		dbclient.couchbaseInstance.conf.Bucket,
+		&gocb.CreatePrimaryQueryIndexOptions{
+			Timeout:        20 * time.Second,
+			IgnoreIfExists: true,
+			ScopeName:      dbclient.couchbaseInstance.conf.Scope,
+			CollectionName: dbclient.dbName,
+		},
+	)
+
+	if err != nil {
+		fmt.Printf("Error creating primary index: %s", err)
 		return err
 	}
 
@@ -219,20 +246,10 @@ func (dbclient *couchbaseDatabase) dropDatabase() error {
 
 func (dbclient *couchbaseDatabase) insertDocuments(docs []*couchbaseDoc) error {
 	couchbaseLogger.Infof("[%s] Entering insertDocuments()", dbclient.dbName)
-	responses, err := dbclient.batchUpdateDocuments(docs)
+	err := dbclient.batchUpdateDocuments(docs)
 	if err != nil {
 		return errors.WithMessage(err, "error while updating docs in bulk")
 	}
-
-	for i, resp := range responses {
-		if resp.Ok {
-			continue
-		}
-		if err := dbclient.saveDoc(resp.ID, docs[i]); err != nil {
-			return errors.WithMessagef(err, "error while storing doc with ID %s", resp.ID)
-		}
-	}
-	couchbaseLogger.Infof("[%s] Exiting insertDocuments()", dbclient.dbName)
 	return nil
 }
 
@@ -253,7 +270,7 @@ func (dbclient *couchbaseDatabase) deleteDocument(key string) error {
 }
 
 // batchUpdateDocuments - batch method to batch update documents
-func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDoc) ([]*batchUpdateResponse, error) {
+func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDoc) error {
 	dbName := dbclient.dbName
 	couchbaseLogger.Infof("[%s] Entering batchUpdateDocuments()", dbName)
 
@@ -261,8 +278,6 @@ func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDo
 	batches, err := buildUpdateBatches(documents, 1000)
 
 	var (
-		response []*batchUpdateResponse
-		respMx   sync.Mutex
 		batchWG  sync.WaitGroup
 		errsChan = make(chan error, len(batches))
 	)
@@ -271,7 +286,7 @@ func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDo
 	batchWG.Add(len(batches))
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, batch := range batches {
 		go func(batch []gocb.BulkOp) {
@@ -281,18 +296,22 @@ func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDo
 				log.Println(err)
 			}
 
-			// Be sure to check each individual operation for errors too.
+			// Check each individual operation for errors too.
+			var checkWg sync.WaitGroup
+			checkWg.Add(len(batch))
 			for _, op := range batch {
-				upsertOp := op.(*gocb.UpsertOp)
-				// TODO check the id here is it the document ID ? This is possibly a bug.
-
-				respMx.Lock()
-				response = append(response, &batchUpdateResponse{
-					ID: upsertOp.ID,
-					Ok: upsertOp.Err == nil,
-				})
-				respMx.Unlock()
+				go func(batch []gocb.BulkOp) {
+					checkWg.Done()
+					upsertOp := op.(*gocb.UpsertOp)
+					if upsertOp.Err != nil {
+						couchbaseLogger.Errorf("[%s] Error upserting document: %s, Retrying... %+v", dbclient.dbName, upsertOp.Err, upsertOp)
+						if err := dbclient.saveDoc(upsertOp.ID, upsertOp.Value); err != nil {
+							errsChan <- errors.WithMessagef(err, "error while storing doc with ID %s", upsertOp.ID)
+						}
+					}
+				}(batch)
 			}
+			checkWg.Wait()
 		}(batch)
 	}
 
@@ -301,80 +320,48 @@ func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDo
 	select {
 	case err := <-errsChan:
 		couchbaseLogger.Infof("[%s] Exiting batchUpdateDocuments() with error", dbclient.dbName)
-		return nil, errors.WithStack(err)
+		return errors.WithStack(err)
 	default:
 		couchbaseLogger.Infof("[%s] Exiting batchUpdateDocuments()", dbName)
-		return response, nil
+		return nil
 	}
 }
 
-func (dbclient *couchbaseDatabase) batchGetDocument(keys []string) ([]*couchbaseDoc, error) {
+func (dbclient *couchbaseDatabase) batchGetDocument(keys []gocb.BulkOp) ([]*couchbaseDoc, error) {
 	dbName := dbclient.dbName
 	couchbaseLogger.Infof("[%s] Entering batchGetDocument()", dbName)
 
-	batches, err := buildGetBatches(keys, 1000)
+	results := make([]*couchbaseDoc, 0, len(keys))
+
+	err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(keys, nil)
 	if err != nil {
-		return nil, err
+		log.Println(err)
 	}
-	couchbaseLogger.Infof("Batching %d documents into %d batches", len(keys), len(batches))
+	for _, op := range keys {
+		response := make(couchbaseDoc)
 
-	var (
-		responses []*couchbaseDoc
-		respMx    sync.Mutex
-		batchWG   sync.WaitGroup
-		errsChan  = make(chan error, len(batches))
-	)
+		getOp := op.(*gocb.GetOp)
 
-	batchWG.Add(len(batches))
-	defer close(errsChan)
-
-	for _, batch := range batches {
-		go func(batch []gocb.BulkOp) {
-			defer batchWG.Done()
-			err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(batch, nil)
-			if err != nil {
-				log.Println(err)
+		if getOp.Err != nil {
+			if strings.Contains(getOp.Err.Error(), "document not found") {
+				couchbaseLogger.Infof("Document with ID %s not found", getOp.ID)
+				continue
+			} else {
+				couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, getOp.Err)
+				return nil, getOp.Err
 			}
-			var responseWG sync.WaitGroup
-			responseWG.Add(len(batch))
-			for _, op := range batch {
-				response := make(couchbaseDoc)
+		}
 
-				getOp := op.(*gocb.GetOp)
+		err := getOp.Result.Content(&response)
 
-				if getOp.Err != nil {
-					if strings.Contains(getOp.Err.Error(), "document not found") {
-						couchbaseLogger.Infof("Document with ID %s not found", getOp.ID)
-						continue
-					} else {
-						couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, getOp.Err)
-						errsChan <- err
-					}
-				}
+		results = append(results, &response)
 
-				err := getOp.Result.Content(&response)
-				if err != nil {
-					couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, err)
-					errsChan <- err
-				}
-
-				respMx.Lock()
-				responses = append(responses, &response)
-				respMx.Unlock()
-			}
-		}(batch)
-
+		if err != nil {
+			couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, err)
+			return nil, err
+		}
 	}
-
-	batchWG.Wait()
-
-	select {
-	case err := <-errsChan:
-		couchbaseLogger.Infof("[%s] Exiting batchGetDocument() with error", dbName)
-		return nil, errors.WithStack(err)
-	default:
-		return responses, nil
-	}
+	return results, err
 }
 
 func buildGetBatches(keys []string, documentsPerBatch int) ([][]gocb.BulkOp, error) {

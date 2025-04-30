@@ -29,4 +29,3 @@ TESTS*.xml
 config
 crypto-config
 test-network
-vendor

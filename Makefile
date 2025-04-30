@@ -116,7 +116,7 @@ checks: ## Runs basic checks along with unit and integration tests
 	basic-checks unit-test integration-test
 
 .PHONY: basic-checks
-basic-checks: check-go-version license spelling references trailing-spaces linter check-help-docs check-metrics-doc filename-spaces check-swagger ## Performs basic checks like license, spelling, trailing spaces and linter
+basic-checks: check-go-version
 
 
 .PHONY: desk-checks

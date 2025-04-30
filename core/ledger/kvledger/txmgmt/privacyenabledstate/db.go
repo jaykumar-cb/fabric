@@ -8,8 +8,9 @@ package privacyenabledstate
 
 import (
 	"encoding/base64"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchbase"
 	"strings"
+
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchbase"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-lib-go/common/metrics"

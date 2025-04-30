@@ -8,6 +8,7 @@ package statecouchbase
 
 import (
 	"fmt"
+
 	"github.com/couchbase/gocb/v2"
 )
 

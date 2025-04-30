@@ -3,16 +3,18 @@ package statecouchbase
 import (
 	"encoding/hex"
 	"fmt"
+	"regexp"
+	"strings"
+
 	"github.com/couchbase/gocb/v2"
 	"github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
-	"regexp"
-	"strings"
+
+	"time"
 
 	"github.com/pkg/errors"
-	"time"
 )
 
 // https://docs.couchbase.com/server/current/learn/data/scopes-and-collections.html#naming-for-scopes-and-collections

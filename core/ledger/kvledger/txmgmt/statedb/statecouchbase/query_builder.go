@@ -3,10 +3,11 @@ package statecouchbase
 import (
 	"bytes"
 	"fmt"
-	"github.com/pkg/errors"
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/pkg/errors"
 )
 
 type populator struct {

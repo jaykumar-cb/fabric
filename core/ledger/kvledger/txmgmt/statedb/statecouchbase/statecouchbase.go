@@ -2,15 +2,16 @@ package statecouchbase
 
 import (
 	"encoding/json"
+	"sort"
+	"strings"
+	"sync"
+
 	"github.com/couchbase/gocb/v2"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"github.com/pkg/errors"
-	"sort"
-	"strings"
-	"sync"
 )
 
 var logger = flogging.MustGetLogger("statecouchbase")

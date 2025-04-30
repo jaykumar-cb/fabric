@@ -207,13 +207,12 @@ func (provider *VersionedDBProvider) Drop(dbName string) error {
 }
 
 type VersionedDB struct {
-	couchbaseInstance *couchbaseInstance
-	metadataDB        *couchbaseDatabase            // A database per channel to store metadata such as savepoint.
-	chainName         string                        // The name of the chain/channel.
-	namespaceDBs      map[string]*couchbaseDatabase // One database per namespace.
-	channelMetadata   *channelMetadata              // Store channel name and namespaceDBInfo
-	//committedDataCache *versionsCache            // Used as a local cache during bulk processing of a block.
-	committedDataCache *versionsCache // Used as a local cache during bulk processing of a block.
+	couchbaseInstance  *couchbaseInstance
+	metadataDB         *couchbaseDatabase            // A database per channel to store metadata such as savepoint.
+	chainName          string                        // The name of the chain/channel.
+	namespaceDBs       map[string]*couchbaseDatabase // One database per namespace.
+	channelMetadata    *channelMetadata              // Store channel name and namespaceDBInfo
+	committedDataCache *versionsCache                // Used as a local cache during bulk processing of a block.
 	verCacheLock       sync.RWMutex
 	mux                sync.RWMutex
 	redoLogger         *redoLogger
@@ -234,12 +233,13 @@ func newVersionedDB(couchbaseInstance *couchbaseInstance, redoLogger *redoLogger
 	}
 	namespaceDBMap := make(map[string]*couchbaseDatabase)
 	vdb := &VersionedDB{
-		couchbaseInstance: couchbaseInstance,
-		metadataDB:        metadataDB,
-		chainName:         chainName,
-		namespaceDBs:      namespaceDBMap,
-		cache:             cache,
-		redoLogger:        redoLogger,
+		couchbaseInstance:  couchbaseInstance,
+		metadataDB:         metadataDB,
+		chainName:          chainName,
+		namespaceDBs:       namespaceDBMap,
+		cache:              cache,
+		redoLogger:         redoLogger,
+		committedDataCache: newVersionCache(),
 	}
 
 	logger.Infof("chain [%s]: checking for redolog record", chainName)
@@ -533,6 +533,7 @@ func (vdb *VersionedDB) ExecuteQueryWithPagination(namespace, query, bookmark st
 
 func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version.Height) error {
 	logger.Infof("Entering ApplyUpdates() with height: %v", height)
+
 	if height != nil && batch.ContainsPostOrderWrites {
 		// height is passed nil when committing missing private data for previously committed blocks
 		r := &redoRecord{
@@ -545,57 +546,72 @@ func (vdb *VersionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 		}
 	}
 
-	var batchWG sync.WaitGroup
-	batchWG.Add(len(batch.GetUpdatedNamespaces()))
-	var errsChan = make(chan error, len(batch.GetUpdatedNamespaces()))
-	defer close(errsChan)
-
-	for _, ns := range batch.GetUpdatedNamespaces() {
-		go func(ns string) {
-			defer batchWG.Done()
-			updates := batch.GetUpdates(ns)
-			db, err := vdb.getNamespaceDBHandle(ns)
-			if err != nil {
-				logger.Infof("Exiting ApplyUpdates() with error: %s", err)
-				errsChan <- err
-			}
-			var updatesToBatch []*couchbaseDoc
-			for k, vv := range updates {
-				document, err := keyValToCouchbaseDoc(&keyValue{k, vv})
-				if err != nil {
-					errsChan <- err
-				}
-				if (*document)[deletedField] != nil && (*document)[deletedField] == true {
-					couchbaseLogger.Infof("ApplyUpdates() deleteing document with key: %s", k)
-					// TODO: Efficient deletion, do in batch or build a query
-					err := db.deleteDocument(k)
-					if err != nil {
-						errsChan <- err
-					}
-					continue
-				}
-
-				updatesToBatch = append(updatesToBatch, document)
-			}
-			if err := db.batchUpdateDocuments(updatesToBatch); err != nil {
-				logger.Infof("Exiting ApplyUpdates() with error: %s", err)
-				errsChan <- err
-			}
-		}(ns)
+	// stage 1 - buildCommitters builds committers per namespace (per DB). Each committer transforms the
+	// given batch in the form of underlying db and keep it in memory.
+	committers, err := vdb.buildCommitters(batch)
+	if err != nil {
+		logger.Infof("Exiting applyUpdates() with error building committers: %s", err)
+		return err
 	}
 
-	batchWG.Wait()
+	if err = vdb.executeCommitter(committers); err != nil {
+		logger.Infof("Exiting applyUpdates() with error executing committers: %s", err)
+		return err
+	}
 
+	// Stgae 3 - postCommitProcessing - flush and record savepoint.
+	namespaces := batch.GetUpdatedNamespaces()
+	if err := vdb.postCommitProcessing(committers, namespaces, height); err != nil {
+		logger.Infof("Exiting applyUpdates() with error in post commit processing: %s", err)
+		return err
+	}
+
+	return nil
+}
+
+func (vdb *VersionedDB) postCommitProcessing(committers []*committer, namespaces []string, height *version.Height) error {
+	couchbaseLogger.Infof("Entering postCommitProcessing() with %d committers, height: %v", len(committers), height)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	errChan := make(chan error, 1)
+	defer close(errChan)
+	go func() {
+		defer wg.Done()
+
+		cacheUpdates := make(cacheUpdates)
+		for _, c := range committers {
+			if !c.cacheEnabled {
+				continue
+			}
+			cacheUpdates.add(c.namespace, c.cacheKVs)
+		}
+
+		if len(cacheUpdates) == 0 {
+			return
+		}
+
+		// update the cache
+		if err := vdb.cache.UpdateStates(vdb.chainName, cacheUpdates); err != nil {
+			vdb.cache.Reset()
+			errChan <- err
+		}
+	}()
+
+	// Record a savepoint at a given height
+	if err := vdb.recordSavepoint(height); err != nil {
+		couchbaseLogger.Errorf("Error during recordSavepoint: %s", err.Error())
+		couchbaseLogger.Infof("Exiting postCommitProcessing() with recordSavepoint error: %s", err)
+		return err
+	}
+
+	wg.Wait()
 	select {
-	case err := <-errsChan:
+	case err := <-errChan:
+		couchbaseLogger.Infof("Exiting postCommitProcessing() with error from cache update: %s", err)
 		return errors.WithStack(err)
 	default:
-		if err := vdb.recordSavepoint(height); err != nil {
-			logger.Errorf("Error during recordSavepoint: %s", err.Error())
-			logger.Infof("Exiting ApplyUpdates() with recordSavepoint error: %s", err)
-			return err
-		}
-		logger.Infof("Exiting ApplyUpdates()")
+		couchbaseLogger.Infof("Exiting postCommitProcessing() successfully")
 		return nil
 	}
 }

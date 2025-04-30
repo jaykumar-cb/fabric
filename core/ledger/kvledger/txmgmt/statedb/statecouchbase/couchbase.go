@@ -102,6 +102,8 @@ func (dbclient *couchbaseDatabase) createDatabase() error {
 		return err
 	}
 
+	time.Sleep(10 * time.Second)
+
 	//IndexCreationQuery, _, _ := populateQuery("CREATE PRIMARY INDEX ON {{ .Source }}", 0, "", dbclient)
 	//couchbaseLogger.Infof("Index Query: %s", IndexCreationQuery)
 	//_, err = dbclient.queryDocuments(IndexCreationQuery)
@@ -246,7 +248,14 @@ func (dbclient *couchbaseDatabase) dropDatabase() error {
 
 func (dbclient *couchbaseDatabase) insertDocuments(docs []*couchbaseDoc) error {
 	couchbaseLogger.Infof("[%s] Entering insertDocuments()", dbclient.dbName)
-	err := dbclient.batchUpdateDocuments(docs)
+	batch := make([]gocb.BulkOp, len(docs))
+	for _, doc := range docs {
+		batch = append(batch, &gocb.UpsertOp{
+			ID:    (*doc)[idField].(string),
+			Value: doc,
+		})
+	}
+	err := dbclient.batchUpdateDocuments(batch)
 	if err != nil {
 		return errors.WithMessage(err, "error while updating docs in bulk")
 	}
@@ -270,52 +279,35 @@ func (dbclient *couchbaseDatabase) deleteDocument(key string) error {
 }
 
 // batchUpdateDocuments - batch method to batch update documents
-func (dbclient *couchbaseDatabase) batchUpdateDocuments(documents []*couchbaseDoc) error {
+func (dbclient *couchbaseDatabase) batchUpdateDocuments(batch []gocb.BulkOp) error {
 	dbName := dbclient.dbName
 	couchbaseLogger.Infof("[%s] Entering batchUpdateDocuments()", dbName)
 
-	// TODO use configuration file for this Refer: https://docs.couchbase.com/go-sdk/current/howtos/concurrent-async-apis.html#sizing-batches-examples
-	batches, err := buildUpdateBatches(documents, 1000)
-
-	var (
-		batchWG  sync.WaitGroup
-		errsChan = make(chan error, len(batches))
-	)
+	var errsChan = make(chan error, 1000)
 	defer close(errsChan)
 
-	batchWG.Add(len(batches))
-
+	err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(batch, nil)
 	if err != nil {
+		log.Println(err)
 		return err
 	}
-	for _, batch := range batches {
-		go func(batch []gocb.BulkOp) {
-			defer batchWG.Done()
-			err := dbclient.couchbaseInstance.scope.Collection(dbName).Do(batch, nil)
-			if err != nil {
-				log.Println(err)
-			}
 
-			// Check each individual operation for errors too.
-			var checkWg sync.WaitGroup
-			checkWg.Add(len(batch))
-			for _, op := range batch {
-				go func(batch []gocb.BulkOp) {
-					checkWg.Done()
-					upsertOp := op.(*gocb.UpsertOp)
-					if upsertOp.Err != nil {
-						couchbaseLogger.Errorf("[%s] Error upserting document: %s, Retrying... %+v", dbclient.dbName, upsertOp.Err, upsertOp)
-						if err := dbclient.saveDoc(upsertOp.ID, upsertOp.Value); err != nil {
-							errsChan <- errors.WithMessagef(err, "error while storing doc with ID %s", upsertOp.ID)
-						}
-					}
-				}(batch)
+	// Check each individual operation for errors too.
+	var checkWg sync.WaitGroup
+	checkWg.Add(len(batch))
+	for _, op := range batch {
+		go func(batch []gocb.BulkOp) {
+			checkWg.Done()
+			upsertOp := op.(*gocb.UpsertOp)
+			if upsertOp.Err != nil {
+				couchbaseLogger.Errorf("[%s] Error upserting document: %s, Retrying... %+v", dbclient.dbName, upsertOp.Err, upsertOp)
+				if err := dbclient.saveDoc(upsertOp.ID, upsertOp.Value); err != nil {
+					errsChan <- errors.WithMessagef(err, "error while storing doc with ID %s", upsertOp.ID)
+				}
 			}
-			checkWg.Wait()
 		}(batch)
 	}
-
-	batchWG.Wait()
+	checkWg.Wait()
 
 	select {
 	case err := <-errsChan:

@@ -70,6 +70,9 @@ func getAllDatabases(couchbaseInstance *couchbaseInstance) []string {
 	}
 	for _, scope := range scopes {
 		for _, collection := range scope.Collections {
+			if strings.HasPrefix(collection.Name, "_") {
+				continue
+			}
 			allCollections = append(allCollections, collection.Name)
 		}
 	}

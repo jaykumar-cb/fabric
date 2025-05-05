@@ -10,16 +10,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"syscall"
-
 	"github.com/hyperledger/fabric/integration/nwo"
 	"github.com/hyperledger/fabric/integration/nwo/commands"
 	"github.com/hyperledger/fabric/integration/nwo/runner"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
-	"github.com/tedsuo/ifrit"
+	"path/filepath"
 )
 
 var _ = Describe("all shim APIs for non-private data", func() {
@@ -155,7 +152,7 @@ var _ = Describe("all shim APIs for non-private data", func() {
 	})
 
 	When("CouchDB is used as stateDB", func() {
-		var couchProcess ifrit.Process
+		//var couchProcess ifrit.Process
 
 		BeforeEach(func() {
 			By("stopping peers")
@@ -166,15 +163,16 @@ var _ = Describe("all shim APIs for non-private data", func() {
 			// Note that we do not support a channel with mixed DBs.
 			// However, for testing, it would be fine to use couchdb for one
 			// peer and sending all the couchdb related test queries to this peer
-			couchDB := &runner.CouchDB{}
-			couchProcess = ifrit.Invoke(couchDB)
-			Eventually(couchProcess.Ready(), runner.DefaultStartTimeout).Should(BeClosed())
-			Consistently(couchProcess.Wait()).ShouldNot(Receive())
-			couchAddr := couchDB.Address()
+			couchDB := &runner.Couchbase{}
+			couchDB.CleanupCluster()
+			//couchProcess = ifrit.Invoke(couchDB)
+			//Eventually(couchProcess.Ready(), runner.DefaultStartTimeout).Should(BeClosed())
+			//Consistently(couchProcess.Wait()).ShouldNot(Receive())
+			//couchAddr := couchDB.Address()
 			peer := setup.network.Peer("Org2", "peer0")
 			core := setup.network.ReadPeerConfig(peer)
-			core.Ledger.State.StateDatabase = "CouchDB"
-			core.Ledger.State.CouchDBConfig.CouchDBAddress = couchAddr
+			//core.Ledger.State.StateDatabase = "CouchDB"
+			//core.Ledger.State.CouchDBConfig.CouchDBAddress = couchAddr
 			setup.network.WritePeerConfig(peer, core)
 
 			By("restarting peers with couchDB")
@@ -182,8 +180,8 @@ var _ = Describe("all shim APIs for non-private data", func() {
 		})
 
 		AfterEach(func() {
-			couchProcess.Signal(syscall.SIGTERM)
-			Eventually(couchProcess.Wait(), setup.network.EventuallyTimeout).Should(Receive())
+			//couchProcess.Signal(syscall.SIGTERM)
+			//Eventually(couchProcess.Wait(), setup.network.EventuallyTimeout).Should(Receive())
 		})
 
 		It("calls marbles APIs", func() {

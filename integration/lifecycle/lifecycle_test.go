@@ -61,16 +61,17 @@ var _ = Describe("Lifecycle", func() {
 		// However, for testing, it would be fine to use couchdb for one
 		// peer. We're using couchdb here to ensure all supported character
 		// classes in chaincode names/versions work on the supported db types.
-		couchDB := &runner.CouchDB{}
-		couchProcess := ifrit.Invoke(couchDB)
-		Eventually(couchProcess.Ready(), runner.DefaultStartTimeout).Should(BeClosed())
-		Consistently(couchProcess.Wait()).ShouldNot(Receive())
-		couchAddr := couchDB.Address()
+		couchDB := &runner.Couchbase{}
+		couchDB.CleanupCluster()
+		//couchProcess := ifrit.Invoke(couchDB)
+		//Eventually(couchProcess.Ready(), runner.DefaultStartTimeout).Should(BeClosed())
+		//Consistently(couchProcess.Wait()).ShouldNot(Receive())
+		//couchAddr := couchDB.Address()
 		peer := network.Peer("Org1", "peer0")
 		core := network.ReadPeerConfig(peer)
-		core.Ledger.State.StateDatabase = "CouchDB"
-		core.Ledger.State.CouchDBConfig.CouchDBAddress = couchAddr
-		processes[couchDB.Name] = couchProcess
+		//core.Ledger.State.StateDatabase = "CouchDB"
+		//core.Ledger.State.CouchDBConfig.CouchDBAddress = couchAddr
+		//processes[couchDB.Name] = couchProcess
 		setTermFileEnvForBinaryExternalBuilder := func(envKey, termFile string, externalBuilders []fabricconfig.ExternalBuilder) {
 			os.Setenv(envKey, termFile)
 			for i, e := range externalBuilders {

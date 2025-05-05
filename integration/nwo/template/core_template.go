@@ -217,13 +217,15 @@ ledger:
       requestTimeout: 35s
       queryLimit: 10000
       maxBatchUpdateSize: 1000
-	couchbaseConfig:
+    couchbaseConfig:
       couchbaseAddress: couchbases://cb.ytjj89q8f6afda87.customsubdomain.nonprod-project-avengers.com
       IsCapellaInstance: true
       username: Administrator
       password: Password@123
       bucket: fabric
       scope: _default
+      queryLimit: 10000
+      maxBatchUpdateSize: 1000
   history:
     enableHistoryDatabase: true
   pvtdataStore:

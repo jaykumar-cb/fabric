@@ -207,7 +207,7 @@ chaincode:
 ledger:
   blockchain:
   state:
-    stateDatabase: Couchbase
+    stateDatabase: goleveldb
     couchDBConfig:
       couchDBAddress: 127.0.0.1:5984
       username:
@@ -218,8 +218,8 @@ ledger:
       queryLimit: 10000
       maxBatchUpdateSize: 1000
     couchbaseConfig:
-      couchbaseAddress: couchbases://cb.ytjj89q8f6afda87.customsubdomain.nonprod-project-avengers.com
-      IsCapellaInstance: true
+      couchbaseAddress: couchbase://127.0.0.1
+      IsCapellaInstance: false
       username: Administrator
       password: Password@123
       bucket: fabric-1

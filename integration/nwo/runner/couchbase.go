@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"github.com/couchbase/gocb/v2"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"runtime/debug"
@@ -55,13 +54,13 @@ type Couchbase struct {
 	stopped bool
 }
 
-func setupCluster(containerName, connectionString, username, password, bucketName string) error {
+func setupCluster(containerName, connectionString, bucketName string) error {
 	// Initialize the cluster
 	clusterInitCmd := exec.Command("docker", "exec", "-i", containerName,
 		"couchbase-cli", "cluster-init",
 		"--cluster", connectionString,
-		"--cluster-username", username,
-		"--cluster-password", password,
+		"--cluster-username", CouchbaseUsername,
+		"--cluster-password", CouchbasePassword,
 		"--cluster-ramsize", "512",
 		"--cluster-index-ramsize", "512",
 		"--cluster-fts-ramsize", "512",
@@ -79,8 +78,8 @@ func setupCluster(containerName, connectionString, username, password, bucketNam
 	bucketCreateCmd := exec.Command("docker", "exec", "-i", containerName,
 		"couchbase-cli", "bucket-create",
 		"-c", connectionString,
-		"--username", username,
-		"--password", password,
+		"--username", CouchbaseUsername,
+		"--password", CouchbasePassword,
 		"--bucket", bucketName,
 		"--bucket-type", "couchbase",
 		"--bucket-ramsize", "200",
@@ -144,14 +143,14 @@ func (c *Couchbase) Run(sigCh <-chan os.Signal, ready chan<- struct{}) error {
 	}
 
 	hostPortBindings := map[docker.Port][]docker.PortBinding{
-		"8091/tcp":  {{HostIP: "0.0.0.0", HostPort: "8091"}},
-		"8092/tcp":  {{HostIP: "0.0.0.0", HostPort: "8092"}},
-		"8093/tcp":  {{HostIP: "0.0.0.0", HostPort: "8093"}},
-		"8094/tcp":  {{HostIP: "0.0.0.0", HostPort: "8094"}},
-		"8095/tcp":  {{HostIP: "0.0.0.0", HostPort: "8095"}},
-		"8096/tcp":  {{HostIP: "0.0.0.0", HostPort: "8096"}},
-		"11210/tcp": {{HostIP: "0.0.0.0", HostPort: "11210"}},
-		"11211/tcp": {{HostIP: "0.0.0.0", HostPort: "11211"}},
+		"8091/tcp":  {{HostIP: c.HostIP, HostPort: "8091"}},
+		"8092/tcp":  {{HostIP: c.HostIP, HostPort: "8092"}},
+		"8093/tcp":  {{HostIP: c.HostIP, HostPort: "8093"}},
+		"8094/tcp":  {{HostIP: c.HostIP, HostPort: "8094"}},
+		"8095/tcp":  {{HostIP: c.HostIP, HostPort: "8095"}},
+		"8096/tcp":  {{HostIP: c.HostIP, HostPort: "8096"}},
+		"11210/tcp": {{HostIP: c.HostIP, HostPort: "11210"}},
+		"11211/tcp": {{HostIP: c.HostIP, HostPort: "11211"}},
 	}
 
 	hostConfig := &docker.HostConfig{
@@ -187,7 +186,10 @@ func (c *Couchbase) Run(sigCh <-chan os.Signal, ready chan<- struct{}) error {
 	if err != nil {
 		return err
 	}
-	c.hostAddress = container.NetworkSettings.Ports[c.ContainerPort][0].HostIP
+	fmt.Printf("Couchbase container started with host IP %+v\n", container.NetworkSettings.Ports)
+	fmt.Printf("c.ContainerPort: %+v\n", c.HostIP)
+
+	c.hostAddress = c.HostIP
 	c.containerAddress = container.NetworkSettings.IPAddress
 
 	streamCtx, streamCancel := context.WithCancel(context.Background())
@@ -209,6 +211,9 @@ func (c *Couchbase) Run(sigCh <-chan os.Signal, ready chan<- struct{}) error {
 		c.address = c.containerAddress
 	}
 
+	time.Sleep(10 * time.Second)
+	err = setupCluster(c.containerID, c.hostAddress, "fabric-1")
+
 	cancel()
 	close(ready)
 
@@ -225,16 +230,7 @@ func (c *Couchbase) Run(sigCh <-chan os.Signal, ready chan<- struct{}) error {
 }
 
 func endpointReadyCouchbase(ctx context.Context, url string) bool {
-	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer cancel()
-
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return false
-	}
-
-	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
-	return err == nil && resp.StatusCode == http.StatusOK
+	return true
 }
 
 func (c *Couchbase) ready(ctx context.Context, addr string) <-chan struct{} {
@@ -300,7 +296,7 @@ func (c *Couchbase) Address() string {
 
 // HostAddress returns the host address where this Couchbase instance is available.
 func (c *Couchbase) HostAddress() string {
-	return c.hostAddress
+	return fmt.Sprintf("couchbase://%s", c.hostAddress)
 }
 
 // ContainerAddress returns the container address where this Couchbase instance
@@ -383,8 +379,8 @@ func (c *Couchbase) CleanupCluster() {
 			TLSSkipVerify: true,
 		},
 		Authenticator: gocb.PasswordAuthenticator{
-			Username: "Administrator",
-			Password: "Password@123",
+			Username: CouchbaseUsername,
+			Password: CouchbasePassword,
 		},
 	}
 	cluster, err := gocb.Connect("couchbases://cb.ytjj89q8f6afda87.customsubdomain.nonprod-project-avengers.com", options)

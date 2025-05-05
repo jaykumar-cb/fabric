@@ -489,13 +489,13 @@ var _ = Describe("Snapshot Generation and Bootstrap", func() {
 })
 
 func configPeerWithCouchDB(s *setup, peer *nwo.Peer) ifrit.Process {
-	couchDB := &runner.CouchDB{}
+	couchDB := &runner.Couchbase{}
 	couchProc := ifrit.Invoke(couchDB)
 	Eventually(couchProc.Ready(), runner.DefaultStartTimeout).Should(BeClosed())
 	Consistently(couchProc.Wait()).ShouldNot(Receive())
 
 	core := s.network.ReadPeerConfig(peer)
-	core.Ledger.State.StateDatabase = "CouchDB"
+	core.Ledger.State.StateDatabase = "Couchbase"
 	core.Ledger.State.CouchDBConfig.CouchDBAddress = couchDB.Address()
 
 	By("configuring peer to couchdb address " + couchDB.Address())

@@ -174,6 +174,7 @@ unit-tests: unit-test ## Alias for unit-test
 .PHONY: docker-thirdparty
 docker-thirdparty: docker-thirdparty-couchdb ## Pull thirdparty docker images
 	docker pull hyperledger/fabric-ccenv:1.4
+	docker pull couchbase:latest
 
 .PHONY: docker-thirdparty-couchdb
 docker-thirdparty-couchdb: ## Pull couchdb docker image

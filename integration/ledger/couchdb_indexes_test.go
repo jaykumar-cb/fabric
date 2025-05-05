@@ -53,7 +53,7 @@ var _ = Describe("CouchDB indexes", func() {
 		ordererProcess, peerProcess ifrit.Process
 
 		couchAddr    string
-		couchDB      *runner.Couchbase
+		couchDB      *runner.CouchDB
 		couchProcess ifrit.Process
 
 		chaincode nwo.Chaincode
@@ -82,14 +82,14 @@ var _ = Describe("CouchDB indexes", func() {
 		// Note that we do not support a channel with mixed DBs.
 		// However, for testing, it would be fine to use couchdb for one
 		// peer and sending all the couchdb related test queries to this peer
-		couchDB = &runner.Couchbase{}
+		couchDB = &runner.CouchDB{}
 		couchProcess = ifrit.Invoke(couchDB)
 		Eventually(couchProcess.Ready(), runner.DefaultStartTimeout).Should(BeClosed())
 		Consistently(couchProcess.Wait()).ShouldNot(Receive())
 		couchAddr = couchDB.Address()
 		peer := network.Peer("Org1", "peer0")
 		core := network.ReadPeerConfig(peer)
-		core.Ledger.State.StateDatabase = "Couchbase"
+		core.Ledger.State.StateDatabase = "CouchDB"
 		core.Ledger.State.CouchDBConfig.CouchDBAddress = couchAddr
 		network.WritePeerConfig(peer, core)
 

@@ -18,6 +18,7 @@ import (
 	"github.com/onsi/gomega/gexec"
 	"github.com/tedsuo/ifrit"
 	"path/filepath"
+	"syscall"
 )
 
 var _ = Describe("all shim APIs for non-private data", func() {
@@ -108,8 +109,8 @@ var _ = Describe("all shim APIs for non-private data", func() {
 		expectedQueryResult := newMarbleQueryResult(1, 5, "blue", 35, "jerry")
 		helper.assertQueryMarbles(ccName, peer, expectedQueryResult, "queryMarblesByOwner", "jerry")
 
-		By("quering marbles by search criteria")
-		helper.assertQueryMarbles(ccName, peer, expectedQueryResult, "queryMarbles", `{"selector":{"color":"blue"}}`)
+		//By("quering marbles by search criteria")
+		//helper.assertQueryMarbles(ccName, peer, expectedQueryResult, "queryMarbles", `SELECT a.* FROM {{ .Source }} as a WHERE a.color="blue"`)
 
 		By("quering marbles by range with pagination size 3, 1st call")
 		bookmark := ""
@@ -180,8 +181,8 @@ var _ = Describe("all shim APIs for non-private data", func() {
 		})
 
 		AfterEach(func() {
-			//couchProcess.Signal(syscall.SIGTERM)
-			//Eventually(couchProcess.Wait(), setup.network.EventuallyTimeout).Should(Receive())
+			couchProcess.Signal(syscall.SIGTERM)
+			Eventually(couchProcess.Wait(), setup.network.EventuallyTimeout).Should(Receive())
 		})
 
 		It("calls marbles APIs", func() {

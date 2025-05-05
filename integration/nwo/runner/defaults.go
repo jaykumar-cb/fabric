@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const DefaultStartTimeout = 60 * time.Second
+const DefaultStartTimeout = 300 * time.Second
 
 // DefaultNamer is the default naming function.
 var DefaultNamer NameFunc = UniqueName

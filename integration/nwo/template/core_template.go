@@ -222,7 +222,7 @@ ledger:
       IsCapellaInstance: true
       username: Administrator
       password: Password@123
-      bucket: fabric
+      bucket: fabric-1
       scope: _default
       queryLimit: 10000
       maxBatchUpdateSize: 1000

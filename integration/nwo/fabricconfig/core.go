@@ -325,7 +325,7 @@ type CouchDBConfig struct {
 }
 
 type CouchbaseConfig struct {
-	CouchDBAddress      string        `yaml:"couchDBAddress,omitempty"`
+	CouchbaseAddress    string        `yaml:"couchbaseAddress,omitempty"`
 	Username            string        `yaml:"username,omitempty"`
 	Password            string        `yaml:"password,omitempty"`
 	Bucket              string        `yaml:"bucket,omitempty"`

@@ -308,14 +308,29 @@ type Ledger struct {
 }
 
 type StateConfig struct {
-	StateDatabase string         `yaml:"stateDatabase,omitempty"`
-	CouchDBConfig *CouchDBConfig `yaml:"couchDBConfig,omitempty"`
+	StateDatabase string           `yaml:"stateDatabase,omitempty"`
+	CouchDBConfig *CouchDBConfig   `yaml:"couchDBConfig,omitempty"`
+	Couchbase     *CouchbaseConfig `yaml:"couchbaseConfig,omitempty"`
 }
 
 type CouchDBConfig struct {
 	CouchDBAddress      string        `yaml:"couchDBAddress,omitempty"`
 	Username            string        `yaml:"username,omitempty"`
 	Password            string        `yaml:"password,omitempty"`
+	MaxRetries          int           `yaml:"maxRetries,omitempty"`
+	MaxRetriesOnStartup int           `yaml:"maxRetriesOnStartup,omitempty"`
+	RequestTimeout      time.Duration `yaml:"requestTimeout,omitempty"`
+	QueryLimit          int           `yaml:"queryLimit,omitempty"`
+	MaxBatchUpdateSize  int           `yaml:"maxBatchUpdateSize,omitempty"`
+}
+
+type CouchbaseConfig struct {
+	CouchDBAddress      string        `yaml:"couchDBAddress,omitempty"`
+	Username            string        `yaml:"username,omitempty"`
+	Password            string        `yaml:"password,omitempty"`
+	Bucket              string        `yaml:"bucket,omitempty"`
+	IsCapellaInstance   string        `yaml:"isCapellaInstance,omitempty"`
+	Scope               string        `yaml:"scope,omitempty"`
 	MaxRetries          int           `yaml:"maxRetries,omitempty"`
 	MaxRetriesOnStartup int           `yaml:"maxRetriesOnStartup,omitempty"`
 	RequestTimeout      time.Duration `yaml:"requestTimeout,omitempty"`

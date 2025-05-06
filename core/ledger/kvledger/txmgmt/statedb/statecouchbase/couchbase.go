@@ -302,12 +302,23 @@ func (dbclient *couchbaseDatabase) batchUpdateDocuments(batch []gocb.BulkOp) err
 	for _, op := range batch {
 		go func(batch []gocb.BulkOp) {
 			checkWg.Done()
-			upsertOp := op.(*gocb.UpsertOp)
-			if upsertOp.Err != nil {
-				couchbaseLogger.Errorf("[%s] Error upserting document: %s, Retrying... %+v", dbclient.dbName, upsertOp.Err, upsertOp)
-				if err := dbclient.saveDoc(upsertOp.ID, upsertOp.Value); err != nil {
-					errsChan <- errors.WithMessagef(err, "error while storing doc with ID %s", upsertOp.ID)
+			switch opTyped := op.(type) {
+			case *gocb.UpsertOp:
+				if opTyped.Err != nil {
+					couchbaseLogger.Errorf("[%s] Error upserting document: %s, Retrying... %+v", dbclient.dbName, opTyped.Err, opTyped)
+					if err := dbclient.saveDoc(opTyped.ID, opTyped.Value); err != nil {
+						errsChan <- errors.WithMessagef(err, "error while storing doc with ID %s", opTyped.ID)
+					}
 				}
+			case *gocb.RemoveOp:
+				if opTyped.Err != nil {
+					couchbaseLogger.Errorf("[%s] Error removing document: %s, Retrying... %+v", dbclient.dbName, opTyped.Err, opTyped)
+					//if err := dbclient.removeDoc(opTyped.ID); err != nil {
+					//	errsChan <- errors.WithMessagef(err, "error while removing doc with ID %s", opTyped.ID)
+					//}
+				}
+			default:
+				couchbaseLogger.Warnf("Unknown operation type: %+v", op)
 			}
 		}(batch)
 	}

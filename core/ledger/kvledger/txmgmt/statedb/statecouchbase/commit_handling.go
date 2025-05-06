@@ -136,10 +136,18 @@ func (vdb *VersionedDB) buildCommittersForNs(ns string, nsUpdates map[string]*st
 			couchbaseLogger.Errorf("[%s] Error converting keyVal to couchbase doc for key %s: %+v", ns, key, err)
 			return nil, err
 		}
-		committers[i].batchUpdates = append(committers[i].batchUpdates, &gocb.UpsertOp{
-			ID:    (*couchbaseDoc)[idField].(string),
-			Value: couchbaseDoc,
-		})
+		if (*couchbaseDoc)[deletedField] == true {
+			couchbaseLogger.Infof("[%s] DELETE for key: %s", ns, key)
+			committers[i].batchUpdates = append(committers[i].batchUpdates, &gocb.RemoveOp{
+				ID: (*couchbaseDoc)[idField].(string),
+			})
+		} else {
+			committers[i].batchUpdates = append(committers[i].batchUpdates, &gocb.UpsertOp{
+				ID:    (*couchbaseDoc)[idField].(string),
+				Value: couchbaseDoc,
+			})
+		}
+
 		committers[i].addToCacheUpdate(kv)
 		if maxBatchSize > 0 && len(committers[i].batchUpdates) == maxBatchSize {
 			i++

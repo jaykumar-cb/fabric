@@ -67,6 +67,6 @@ func populateQuery(query string, queryLimit int32, bookmark string, dbclient *co
 	} else {
 		updatedBookmark = queryLimit
 	}
-	couchbaseLogger.Infof("Exiting populateQuery(), query=[%s] bookmark=[%s]", query)
+	couchbaseLogger.Infof("Exiting populateQuery(), query=[%s] bookmark=[%v]", query, updatedBookmark)
 	return query, int32ToString(updatedBookmark), nil
 }

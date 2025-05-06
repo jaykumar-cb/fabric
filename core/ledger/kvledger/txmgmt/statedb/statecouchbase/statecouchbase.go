@@ -271,8 +271,7 @@ func newVersionedDB(couchbaseInstance *couchbaseInstance, redoLogger *redoLogger
 		return vdb, nil
 	}
 
-	logger.Infof("chain [%s]: save point = %#v, version of redolog record = %#v",
-		chainName, savepoint, redologRecord.Version)
+	logger.Infof("chain [%s]: save point = %#v, version of redolog record = %#v", chainName, savepoint, redologRecord.Version)
 
 	if redologRecord.Version.BlockNum-savepoint.BlockNum == 1 {
 		logger.Infof("chain [%s]: Re-applying last batch", chainName)
@@ -409,6 +408,7 @@ func (vdb *VersionedDB) recordSavepoint(height *version.Height) error {
 	if err != nil {
 		return err
 	}
+	(*savepointCouchbaseDoc)[idField] = savepointDocID
 	err = vdb.metadataDB.saveDoc(savepointDocID, savepointCouchbaseDoc)
 	if err != nil {
 		logger.Errorf("Failed to save the savepoint to DB %s", err.Error())
@@ -725,6 +725,7 @@ func (vdb *VersionedDB) Close() {
 // writeChannelMetadata saves channel metadata to metadataDB
 func (vdb *VersionedDB) writeChannelMetadata() error {
 	logger.Infof("Entering writeChannelMetadata()")
+	vdb.channelMetadata.Id = channelMetadataDocID
 	err := vdb.metadataDB.saveDoc(channelMetadataDocID, vdb.channelMetadata)
 	if err != nil {
 		logger.Infof("Exiting writeChannelMetadata() with error: %s", err)
@@ -1175,8 +1176,7 @@ func (scanner *queryScanner) GetBookmarkAndClose() string {
 
 func newQueryScanner(namespace string, db *couchbaseDatabase, query string, internalQueryLimit,
 	limit int32, bookmark, startKey, endKey string) (*queryScanner, error) {
-	logger.Infof("Entering newQueryScanner() with namespace: %s, query: %s, limit: %d, bookmark: %s, startKey: %s, endKey: %s",
-		namespace, query, limit, bookmark, startKey, endKey)
+	logger.Infof("Entering newQueryScanner() with namespace: %s, query: %s, limit: %d, bookmark: %s, startKey: %s, endKey: %s", namespace, query, limit, bookmark, startKey, endKey)
 	scanner := &queryScanner{namespace, db, &queryDefinition{startKey, endKey, query, internalQueryLimit}, &paginationInfo{-1, limit, bookmark}, &resultsInfo{0, nil}, false, 0}
 	var err error
 	// query is defined, then execute the query and return the records and bookmark
@@ -1312,6 +1312,7 @@ func (s *dbsScanner) Next() (*statedb.VersionedKV, error) {
 	}
 	for {
 		couchbaseDoc, err := s.resultItr.next()
+		couchbaseLogger.Infof("Iterating DbScanner Next() %v,", couchbaseDoc)
 		if err != nil {
 			logger.Infof("Exiting dbsScanner.Next() with error: %s", err)
 			return nil, errors.WithMessagef(

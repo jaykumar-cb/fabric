@@ -187,6 +187,7 @@ type couchbaseSavepointData struct {
 }
 
 type channelMetadata struct {
+	Id          string `json:"_id"`
 	ChannelName string `json:"ChannelName"`
 	// namespace to namespaceDBInfo mapping
 	NamespaceDBsInfo map[string]*namespaceDBInfo `json:"NamespaceDBsInfo"`

@@ -26,6 +26,7 @@ import (
 const (
 	GoLevelDB = "goleveldb"
 	CouchDB   = "CouchDB"
+	Couchbase = "Couchbase"
 )
 
 // Initializer encapsulates dependencies for PeerLedgerProvider
@@ -58,11 +59,14 @@ type Config struct {
 // StateDBConfig is a structure used to configure the state parameters for the ledger.
 type StateDBConfig struct {
 	// StateDatabase is the database to use for storing last known state.  The
-	// two supported options are "goleveldb" and "CouchDB" (captured in the constants GoLevelDB and CouchDB respectively).
+	// three supported options are "Couchbase", "goleveldb" and "CouchDB" (captured in the constants Couchbase, GoLevelDB and CouchDB respectively).
 	StateDatabase string
 	// CouchDB is the configuration for CouchDB.  It is used when StateDatabase
 	// is set to "CouchDB".
 	CouchDB *CouchDBConfig
+	// Couchbase is the configuration for Couchbase.  It is used when StateDatabase
+	// is set to "Couchbase".
+	Couchbase *CouchbaseConfig
 }
 
 // CouchDBConfig is a structure used to configure a CouchInstance.
@@ -97,6 +101,43 @@ type CouchDBConfig struct {
 	// for the user state cache (i.e., all chaincodes deployed by the user). Note that
 	// UserCacheSizeMBs needs to be a multiple of 32 MB. If it is not a multiple of 32 MB,
 	// the peer would round the size to the next multiple of 32 MB.
+	UserCacheSizeMBs int
+}
+
+// CouchbaseConfig is a structure used to configure a CouchbaseInstance.
+type CouchbaseConfig struct {
+	IsCapellaInstance bool
+	Bucket            string
+	Scope             string
+	// Address is the hostname:port of the Couchbase database instance.
+	Address string
+	// Username is the username used to authenticate with Couchbase. This username
+	// must have read and write access permissions.
+	Username string
+	// Password is the password for Username.
+	Password string
+	////MaxRetries is the maximum number of times to retry Couchbase operations on
+	////failure.
+	//MaxRetries int
+	//// MaxRetriesOnStartup is the maximum number of times to retry Couchbase operations on
+	//// failure when initializing the ledger.
+	//MaxRetriesOnStartup int
+	//// RequestTimeout is the timeout used for Couchbase operations.
+	//RequestTimeout time.Duration
+	//// InternalQueryLimit is the maximum number of records to return internally
+	//// when querying CouchDB.
+	InternalQueryLimit int
+	//// MaxBatchUpdateSize is the maximum number of records to included in Couchbase
+	//// bulk update operations.
+	MaxBatchUpdateSize int
+	//// CreateGlobalChangesDB determines whether or not to create the "_global_changes"
+	//// system database.
+	//CreateGlobalChangesDB bool
+	RedoLogPath string
+	//// UserCacheSizeMBs denotes the user specified maximum mega bytes (MB) to be allocated
+	//// for the user state cache (i.e., all chaincodes deployed by the user). Note that
+	//// UserCacheSizeMBs needs to be a multiple of 32 MB. If it is not a multiple of 32 MB,
+	//// the peer would round the size to the next multiple of 32 MB.
 	UserCacheSizeMBs int
 }
 

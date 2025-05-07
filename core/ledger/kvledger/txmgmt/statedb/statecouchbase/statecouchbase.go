@@ -362,7 +362,11 @@ func (vdb *VersionedDB) readChannelMetadata() (*channelMetadata, error) {
 func (couchbaseInstance *couchbaseInstance) retrieveApplicationDBNames() ([]string, error) {
 	// loggerd.Debugf("Entering retrieveApplicationDBNames()")
 	var applicationsDBNames []string
-	for _, d := range getAllDatabases(couchbaseInstance) {
+	allDatabases, err := getAllDatabases(couchbaseInstance)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range allDatabases {
 		if !isCouchbaseSystemDBName(d) {
 			applicationsDBNames = append(applicationsDBNames, d)
 		}

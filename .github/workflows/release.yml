@@ -79,7 +79,7 @@ jobs:
 
         # Dynamic matrix
         # If owner is 'hyperledger' run job for Docker Hub and ghcr, otherwise for personal forks just run job for ghcr
-        registry: ${{ fromJSON(github.repository_owner == 'hyperledger' && '["docker.io", "ghcr.io"]' || '["ghcr.io"]') }}
+        registry: ["docker.io", "ghcr.io"]
 
         component:
           - name: baseos
@@ -160,7 +160,7 @@ jobs:
       matrix:
         # Dynamic matrix
         # If owner is 'hyperledger' run job for Docker Hub and ghcr, otherwise for personal forks just run job for ghcr
-        registry: ${{ fromJSON(github.repository_owner == 'hyperledger' && '["docker.io", "ghcr.io"]' || '["docker.io", "ghcr.io"]') }}
+        registry: ["docker.io", "ghcr.io"]
 
         component:
           - name: baseos

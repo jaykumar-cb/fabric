@@ -107,8 +107,7 @@ func (vdb *VersionedDB) buildCommittersForNs(ns string, nsUpdates map[string]*st
 		return nil, err
 	}
 	// for each namespace, build mutiple committers based on the maxBatchSize
-	//maxBatchSize := db.couchbaseInstance.maxBatchUpdateSize()
-	maxBatchSize := 1000
+	maxBatchSize := db.couchbaseInstance.conf.MaxBatchUpdateSize
 	numCommitters := 1
 	if maxBatchSize > 0 {
 		numCommitters = int(math.Ceil(float64(len(nsUpdates)) / float64(maxBatchSize)))

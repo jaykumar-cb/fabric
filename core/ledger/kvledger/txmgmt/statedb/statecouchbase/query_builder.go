@@ -36,7 +36,7 @@ func int32ToString(i int32) string {
 
 func populateQuery(query string, queryLimit int32, bookmark string, dbclient *couchbaseDatabase) (string, string, error) {
 
-	couchbaseLogger.Infof("Entering populateQuery(), query=[%s], queryLimint=[%d] bookmark=[%q]", query, queryLimit, bookmark)
+	couchbaseLogger.Debugf("Entering populateQuery(), query=[%s], queryLimint=[%d] bookmark=[%q]", query, queryLimit, bookmark)
 	updatedBookmark := int32(-1)
 	query, _ = strings.CutSuffix(query, ";")
 	qtemplate := template.New("SQL++")
@@ -67,6 +67,6 @@ func populateQuery(query string, queryLimit int32, bookmark string, dbclient *co
 	} else {
 		updatedBookmark = queryLimit
 	}
-	couchbaseLogger.Infof("Exiting populateQuery(), query=[%s] bookmark=[%v]", query, updatedBookmark)
+	couchbaseLogger.Debugf("Exiting populateQuery(), query=[%s] bookmark=[%v]", query, updatedBookmark)
 	return query, int32ToString(updatedBookmark), nil
 }

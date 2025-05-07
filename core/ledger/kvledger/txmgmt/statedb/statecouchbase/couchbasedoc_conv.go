@@ -62,9 +62,9 @@ func (c *couchbaseDoc) toBytes() ([]byte, error) {
 }
 
 func (c *couchbaseDoc) key() (string, error) {
-	logger.Infof("Entering couchbaseDoc.key()")
+	logger.Debugf("Entering couchbaseDoc.key()")
 	key := (*c)[idField].(string)
-	logger.Infof("Exiting couchbaseDoc.key() with key: %s", key)
+	logger.Debugf("Exiting couchbaseDoc.key() with key: %s", key)
 	return key, nil
 }
 
@@ -95,7 +95,7 @@ type couchbaseDocFields struct {
 }
 
 func validateAndRetrieveFields(doc *couchbaseDoc) (*couchbaseDocFields, error) {
-	couchbaseLogger.Infof("Entering validateAndRetrieveFields, doc: %v", doc)
+	couchbaseLogger.Debugf("Entering validateAndRetrieveFields, doc: %v", doc)
 	//decoder := json.NewDecoder(bytes.NewBuffer(*doc))
 	//decoder.UseNumber()
 	//if err := decoder.Decode(&jsonDoc); err != nil {
@@ -119,18 +119,18 @@ func validateAndRetrieveFields(doc *couchbaseDoc) (*couchbaseDocFields, error) {
 	var err error
 
 	if (*doc)[attachmentField] == nil {
-		logger.Infof("Attachment field is missing, just sending back the stupid stuff")
+		logger.Debugf("Attachment field is missing, just sending back the stupid stuff")
 		docFields.value, err = doc.toBytes()
 		return docFields, err
 	}
 	attachmentB64 := (*doc)[attachmentField].(string)
-	logger.Infof("Couchbase doc attachements (After marshalling): %v", attachmentB64)
+	logger.Debugf("Couchbase doc attachements (After marshalling): %v", attachmentB64)
 
 	docFields.value, err = b64.StdEncoding.DecodeString(attachmentB64)
-	logger.Infof("Couchbase doc attachements (Before marshalling): %v", docFields.value)
+	logger.Debugf("Couchbase doc attachements (Before marshalling): %v", docFields.value)
 
 	//docFields.value, err = json.Marshal(attachmentString)
-	//logger.Infof("Couchbase doc attachements (After marshalling): %v", docFields)
+	//logger.Debugf()("Couchbase doc attachements (After marshalling): %v", docFields)
 	delete(*doc, attachmentField)
 	return docFields, err
 }
@@ -223,7 +223,7 @@ func decodeSavepoint(couchbaseDoc *couchbaseDoc) (*version.Height, error) {
 //}
 
 func decodeChannelMetadata(couchbaseDoc *couchbaseDoc) (*channelMetadata, error) {
-	couchbaseLogger.Infof("Entering decodeChannelMetadata() with doc: %v", couchbaseDoc)
+	couchbaseLogger.Debugf("Entering decodeChannelMetadata() with doc: %v", couchbaseDoc)
 
 	channelName, ok := (*couchbaseDoc)["ChannelName"].(string)
 	if !ok {
@@ -257,7 +257,7 @@ func decodeChannelMetadata(couchbaseDoc *couchbaseDoc) (*channelMetadata, error)
 		NamespaceDBsInfo: namespaceInfo,
 	}
 
-	couchbaseLogger.Infof("Exiting decodeChannelMetadata() with metadatadoc: %v", metadataDoc)
+	couchbaseLogger.Debugf("Exiting decodeChannelMetadata() with metadatadoc: %v", metadataDoc)
 	return metadataDoc, nil
 }
 

@@ -62,7 +62,7 @@ type IndexData struct {
 //}
 
 func getAllDatabases(couchbaseInstance *couchbaseInstance) []string {
-	couchbaseLogger.Infof("Entering getAllDatabases()")
+	couchbaseLogger.Debugf("Entering getAllDatabases()")
 	var allCollections []string
 	scopes, err := couchbaseInstance.bucket.CollectionsV2().GetAllScopes(nil)
 	if err != nil {
@@ -76,25 +76,25 @@ func getAllDatabases(couchbaseInstance *couchbaseInstance) []string {
 			allCollections = append(allCollections, collection.Name)
 		}
 	}
-	couchbaseLogger.Infof("Exiting getAllDatabases()")
+	couchbaseLogger.Debugf("Exiting getAllDatabases()")
 	return allCollections
 }
 
 func (dbclient *couchbaseDatabase) checkDatabaseExists() bool {
-	couchbaseLogger.Infof("[%s] Entering checkDatabaseExists()", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Entering checkDatabaseExists()", dbclient.dbName)
 	allDatabases := getAllDatabases(dbclient.couchbaseInstance)
 	for _, collection := range allDatabases {
 		if collection == dbclient.dbName {
-			couchbaseLogger.Infof("[%s] Exiting checkDatabaseExists() - found", dbclient.dbName)
+			couchbaseLogger.Debugf("[%s] Exiting checkDatabaseExists() - found", dbclient.dbName)
 			return true
 		}
 	}
-	couchbaseLogger.Infof("[%s] Exiting checkDatabaseExists() - not found", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Exiting checkDatabaseExists() - not found", dbclient.dbName)
 	return false
 }
 
 func (dbclient *couchbaseDatabase) createDatabase() error {
-	couchbaseLogger.Infof("[%s] Entering CreateDatabase()", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Entering CreateDatabase()", dbclient.dbName)
 
 	// Create the collection
 	err := dbclient.couchbaseInstance.bucket.CollectionsV2().CreateCollection(dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, nil, &gocb.CreateCollectionOptions{
@@ -109,7 +109,7 @@ func (dbclient *couchbaseDatabase) createDatabase() error {
 	time.Sleep(10 * time.Second)
 
 	//IndexCreationQuery, _, _ := populateQuery("CREATE PRIMARY INDEX ON {{ .Source }}", 0, "", dbclient)
-	//couchbaseLogger.Infof("Index Query: %s", IndexCreationQuery)
+	//couchbaseLogger.Debugf("Index Query: %s", IndexCreationQuery)
 	//_, err = dbclient.queryDocuments(IndexCreationQuery)
 	//if err != nil {
 	//	couchbaseLogger.Errorf("[%s] Error creating index: %s", dbclient.dbName, err)
@@ -131,30 +131,30 @@ func (dbclient *couchbaseDatabase) createDatabase() error {
 		return err
 	}
 
-	couchbaseLogger.Infof("[%s] Exiting CreateDatabase()", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Exiting CreateDatabase()", dbclient.dbName)
 	return nil
 }
 
 // createDatabaseIfNotExist method provides function to create database
 func (dbclient *couchbaseDatabase) createDatabaseIfNotExist() error {
-	couchbaseLogger.Infof("[%s] Entering CreateDatabaseIfNotExist()", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Entering CreateDatabaseIfNotExist()", dbclient.dbName)
 
 	collectionExists := dbclient.checkDatabaseExists()
 
 	if collectionExists == false {
-		couchbaseLogger.Infof("[%s] CreateDatabaseIfNotExist() - collection does not exist, creating a new one", dbclient.dbName)
+		couchbaseLogger.Debugf("[%s] CreateDatabaseIfNotExist() - collection does not exist, creating a new one", dbclient.dbName)
 		err := dbclient.createDatabase()
 		if err != nil {
 			return err
 		}
 	}
-	couchbaseLogger.Infof("Created state database %s", dbclient.dbName)
-	couchbaseLogger.Infof("[%s] Exiting CreateDatabaseIfNotExist()", dbclient.dbName)
+	couchbaseLogger.Debugf("Created state database %s", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Exiting CreateDatabaseIfNotExist()", dbclient.dbName)
 	return nil
 }
 
 func (dbclient *couchbaseDatabase) readDoc(key string) (*couchbaseDoc, error) {
-	couchbaseLogger.Infof("[%s] Entering readDoc() for key=%s", dbclient.dbName, key)
+	couchbaseLogger.Debugf("[%s] Entering readDoc() for key=%s", dbclient.dbName, key)
 	couchbaseDoc := make(couchbaseDoc)
 	document, err := dbclient.couchbaseInstance.scope.Collection(dbclient.dbName).Get(key, nil)
 	if err != nil {
@@ -167,60 +167,29 @@ func (dbclient *couchbaseDatabase) readDoc(key string) (*couchbaseDoc, error) {
 		couchbaseLogger.Errorf("[%s] Error reading key: %s, Error: %s", dbclient.dbName, key, err)
 		return nil, err
 	}
-	//couchbaseLogger.Infof("[%s] readDoc() for key=%s, value=%s", dbclient.dbName, key, couchbaseDoc)
-	couchbaseLogger.Infof("[%s] Exiting readDoc() for key=%s", dbclient.dbName, key)
+	//couchbaseLogger.Debugf("[%s] readDoc() for key=%s, value=%s", dbclient.dbName, key, couchbaseDoc)
+	couchbaseLogger.Debugf("[%s] Exiting readDoc() for key=%s", dbclient.dbName, key)
 	return &couchbaseDoc, nil
 }
 
 func (dbclient *couchbaseDatabase) saveDoc(key string, value interface{}) error {
-	couchbaseLogger.Infof("[%s] Entering saveDoc() for key=%s", dbclient.dbName, key)
+	couchbaseLogger.Debugf("[%s] Entering saveDoc() for key=%s", dbclient.dbName, key)
 	_, err := dbclient.couchbaseInstance.scope.Collection(dbclient.dbName).Upsert(key, value, nil)
 	if err != nil {
 		return err
 	}
-	couchbaseLogger.Infof("[%s] Exiting saveDoc() for key=%s", dbclient.dbName, key)
+	couchbaseLogger.Debugf("[%s] Exiting saveDoc() for key=%s", dbclient.dbName, key)
 	return nil
 }
 
 func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*couchbaseDoc, error) {
-	couchbaseLogger.Infof("[%s] Entering queryDocuments() with query: %s", dbclient.dbName, query)
+	couchbaseLogger.Debugf("[%s] Entering queryDocuments() with query: %s", dbclient.dbName, query)
 	results := make([]*couchbaseDoc, 0)
 
 	rows, err := dbclient.couchbaseInstance.cluster.Query(query, nil)
 	if err != nil {
 		return nil, err
 	}
-	//if !strings.Contains(query, "INDEX") {
-	//	for rows.Next() {
-	//		row := make(jsonValue)
-	//		var result = &queryResult{}
-	//		var attachment CouchbaseAttachment
-	//
-	//		err := rows.Row(&row)
-	//
-	//		if err != nil {
-	//			return nil, err
-	//		}
-	//
-	//		err = rows.Row(&attachment)
-	//
-	//		if err != nil {
-	//			return nil, err
-	//		}
-	//
-	//		result.id = row[idField].(string)
-	//
-	//		if attachment.Attachment != nil {
-	//			result.attachment = attachment.Attachment
-	//		}
-	//
-	//		rowBytes, err := row.toBytes()
-	//
-	//		result.value = rowBytes
-	//		couchbaseLogger.Infof("Processed document: %s", result.id)
-	//		results = append(results, result)
-	//	}
-	//}
 
 	for rows.Next() {
 		result := make(couchbaseDoc)
@@ -230,7 +199,7 @@ func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*couchbaseDoc
 		}
 		results = append(results, &result)
 	}
-	couchbaseLogger.Infof("[%s] Exiting queryDocuments()", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Exiting queryDocuments()", dbclient.dbName)
 	return results, nil
 }
 
@@ -238,7 +207,7 @@ func (dbclient *couchbaseDatabase) queryDocuments(query string) ([]*couchbaseDoc
 func (dbclient *couchbaseDatabase) dropDatabase() error {
 	dbName := dbclient.dbName
 
-	couchbaseLogger.Infof("[%s] Entering DropDatabase()", dbName)
+	couchbaseLogger.Debugf("[%s] Entering DropDatabase()", dbName)
 
 	err := dbclient.couchbaseInstance.bucket.CollectionsV2().DropCollection(dbclient.couchbaseInstance.conf.Scope, dbName, nil)
 
@@ -246,12 +215,12 @@ func (dbclient *couchbaseDatabase) dropDatabase() error {
 		return err
 	}
 
-	couchbaseLogger.Infof("[%s] Exiting DropDatabase(), database dropped", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Exiting DropDatabase(), database dropped", dbclient.dbName)
 	return nil
 }
 
 func (dbclient *couchbaseDatabase) insertDocuments(docs []*couchbaseDoc) error {
-	couchbaseLogger.Infof("[%s] Entering insertDocuments()", dbclient.dbName)
+	couchbaseLogger.Debugf("[%s] Entering insertDocuments()", dbclient.dbName)
 	batch := make([]gocb.BulkOp, len(docs))
 	for _, doc := range docs {
 		batch = append(batch, &gocb.UpsertOp{
@@ -272,20 +241,20 @@ type batchUpdateResponse struct {
 }
 
 func (dbclient *couchbaseDatabase) deleteDocument(key string) error {
-	couchbaseLogger.Infof("[%s] Entering deleteDocument() for key=%s", dbclient.dbName, key)
+	couchbaseLogger.Debugf("[%s] Entering deleteDocument() for key=%s", dbclient.dbName, key)
 	_, err := dbclient.couchbaseInstance.scope.Collection(dbclient.dbName).Remove(key, nil)
 	if err != nil {
 		couchbaseLogger.Errorf("[%s] Error deleting key: %s, Error: %s", dbclient.dbName, key, err)
 		return err
 	}
-	couchbaseLogger.Infof("[%s] Exiting deleteDocument() for key=%s", dbclient.dbName, key)
+	couchbaseLogger.Debugf("[%s] Exiting deleteDocument() for key=%s", dbclient.dbName, key)
 	return nil
 }
 
 // batchUpdateDocuments - batch method to batch update documents
 func (dbclient *couchbaseDatabase) batchUpdateDocuments(batch []gocb.BulkOp) error {
 	dbName := dbclient.dbName
-	couchbaseLogger.Infof("[%s] Entering batchUpdateDocuments()", dbName)
+	couchbaseLogger.Debugf("[%s] Entering batchUpdateDocuments()", dbName)
 
 	var errsChan = make(chan error, 1000)
 	defer close(errsChan)
@@ -326,17 +295,17 @@ func (dbclient *couchbaseDatabase) batchUpdateDocuments(batch []gocb.BulkOp) err
 
 	select {
 	case err := <-errsChan:
-		couchbaseLogger.Infof("[%s] Exiting batchUpdateDocuments() with error", dbclient.dbName)
+		couchbaseLogger.Debugf("[%s] Exiting batchUpdateDocuments() with error", dbclient.dbName)
 		return errors.WithStack(err)
 	default:
-		couchbaseLogger.Infof("[%s] Exiting batchUpdateDocuments()", dbName)
+		couchbaseLogger.Debugf("[%s] Exiting batchUpdateDocuments()", dbName)
 		return nil
 	}
 }
 
 func (dbclient *couchbaseDatabase) batchGetDocument(keys []gocb.BulkOp) ([]*couchbaseDoc, error) {
 	dbName := dbclient.dbName
-	couchbaseLogger.Infof("[%s] Entering batchGetDocument()", dbName)
+	couchbaseLogger.Debugf("[%s] Entering batchGetDocument()", dbName)
 
 	results := make([]*couchbaseDoc, 0, len(keys))
 
@@ -351,10 +320,10 @@ func (dbclient *couchbaseDatabase) batchGetDocument(keys []gocb.BulkOp) ([]*couc
 
 		if getOp.Err != nil {
 			if strings.Contains(getOp.Err.Error(), "document not found") {
-				couchbaseLogger.Infof("Document with ID %s not found", getOp.ID)
+				couchbaseLogger.Debugf("Document with ID %s not found", getOp.ID)
 				continue
 			} else {
-				couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, getOp.Err)
+				couchbaseLogger.Debugf("Error getting document with ID %s: %v", getOp.ID, getOp.Err)
 				return nil, getOp.Err
 			}
 		}
@@ -364,7 +333,7 @@ func (dbclient *couchbaseDatabase) batchGetDocument(keys []gocb.BulkOp) ([]*couc
 		results = append(results, &response)
 
 		if err != nil {
-			couchbaseLogger.Infof("Error getting document with ID %s: %v", getOp.ID, err)
+			couchbaseLogger.Debugf("Error getting document with ID %s: %v", getOp.ID, err)
 			return nil, err
 		}
 	}
@@ -372,7 +341,7 @@ func (dbclient *couchbaseDatabase) batchGetDocument(keys []gocb.BulkOp) ([]*couc
 }
 
 func buildGetBatches(keys []string, documentsPerBatch int) ([][]gocb.BulkOp, error) {
-	couchbaseLogger.Infof("Entering buildGetBatches()")
+	couchbaseLogger.Debugf("Entering buildGetBatches()")
 
 	var batches [][]gocb.BulkOp
 	var currentBatch []gocb.BulkOp
@@ -390,12 +359,12 @@ func buildGetBatches(keys []string, documentsPerBatch int) ([][]gocb.BulkOp, err
 		}
 	}
 
-	couchbaseLogger.Infof("Exiting buildGetBatches() with %d batches", len(batches))
+	couchbaseLogger.Debugf("Exiting buildGetBatches() with %d batches", len(batches))
 	return batches, nil
 }
 
 func buildUpdateBatches(documents []*couchbaseDoc, documentsPerBatch int) ([][]gocb.BulkOp, error) {
-	couchbaseLogger.Infof("Entering buildUpdateBatches()")
+	couchbaseLogger.Debugf("Entering buildUpdateBatches()")
 
 	var batches [][]gocb.BulkOp
 	var currentBatch []gocb.BulkOp
@@ -414,7 +383,7 @@ func buildUpdateBatches(documents []*couchbaseDoc, documentsPerBatch int) ([][]g
 		}
 	}
 
-	couchbaseLogger.Infof("Exiting buildUpdateBatches() with %d batches", len(batches))
+	couchbaseLogger.Debugf("Exiting buildUpdateBatches() with %d batches", len(batches))
 	return batches, nil
 }
 
@@ -426,15 +395,15 @@ func (dbclient *couchbaseDatabase) readDocRange(startKey, endKey string, limit i
 	dbName := dbclient.dbName
 	newOffset := int32(-1)
 	//limit += 1
-	couchbaseLogger.Infof("[%s] Entering readDocRange()  startKey=[%q], endKey=[%q] limit=[%d]", dbName, startKey, endKey, limit)
+	couchbaseLogger.Debugf("[%s] Entering readDocRange()  startKey=[%q], endKey=[%q] limit=[%d]", dbName, startKey, endKey, limit)
 	var query string
 	nextStartKey := ""
 	//if limit > 0 {
 	if isEffectivelyEmpty(startKey) && isEffectivelyEmpty(endKey) {
-		couchbaseLogger.Infof("[%s] readDocRange() - no startKey and endKey provided, using limit", dbclient.dbName)
-		query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a ORDER BY META().id ASC LIMIT %d OFFSET %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, limit+1, offset)
+		couchbaseLogger.Debugf("[%s] readDocRange() - no startKey and endKey provided, using limit", dbclient.dbName)
+		query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a ORDER BY META().id ASC LIMIT %d OFFSET %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbName, limit+1, offset)
 	} else {
-		query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a WHERE META().id >= '%s' AND META().id <= '%s' ORDER BY META().id ASC LIMIT %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbclient.dbName, startKey, endKey, limit+1)
+		query = fmt.Sprintf("SELECT a.* FROM `%s`.`%s`.`%s` as a WHERE META().id >= '%s' AND META().id <= '%s' ORDER BY META().id ASC LIMIT %d", dbclient.couchbaseInstance.conf.Bucket, dbclient.couchbaseInstance.conf.Scope, dbName, startKey, endKey, limit+1)
 	}
 	//}
 
@@ -444,9 +413,9 @@ func (dbclient *couchbaseDatabase) readDocRange(startKey, endKey string, limit i
 	}
 
 	if isEffectivelyEmpty(startKey) && isEffectivelyEmpty(endKey) {
-		couchbaseLogger.Infof("len(results) = %d, limit = %d", len(results), int(limit)+1)
+		couchbaseLogger.Debugf("len(results) = %d, limit = %d", len(results), int(limit)+1)
 		if len(results) == int(limit)+1 {
-			couchbaseLogger.Infof("len(results) = %d, limit = %d YES", len(results), int(limit)+1)
+			couchbaseLogger.Debugf("len(results) = %d, limit = %d YES", len(results), int(limit)+1)
 			newOffset = offset + limit
 			results = results[:len(results)-1]
 		}
@@ -457,7 +426,7 @@ func (dbclient *couchbaseDatabase) readDocRange(startKey, endKey string, limit i
 		}
 	}
 
-	couchbaseLogger.Infof("[%s] Exiting readDocRange()  startKey=[%q], endKey=[%q] results=[%v], nextStartKey=[%s] offset=[%d]", dbclient.dbName, startKey, endKey, results, nextStartKey, newOffset)
+	couchbaseLogger.Debugf("[%s] Exiting readDocRange()  startKey=[%q], endKey=[%q] results=[%v], nextStartKey=[%s] offset=[%d]", dbclient.dbName, startKey, endKey, results, nextStartKey, newOffset)
 
 	return results, nextStartKey, newOffset, nil
 }

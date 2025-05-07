@@ -221,7 +221,7 @@ func isCouchbaseInternalKey(key string) bool {
 // printDocumentIds is a convenience method to print readable log entries for arrays of pointers
 // to couch document IDs
 func printDocumentIds(documentPointers []*couchbaseDoc) (string, error) {
-	logger.Infof("Entering printDocumentIds() with %d documents", len(documentPointers))
+	logger.Debugf("Entering printDocumentIds() with %d documents", len(documentPointers))
 	documentIds := []string{}
 
 	for _, documentPointer := range documentPointers {
@@ -231,7 +231,7 @@ func printDocumentIds(documentPointers []*couchbaseDoc) (string, error) {
 		documentIds = append(documentIds, docMetadata.ID)
 	}
 	result := strings.Join(documentIds, ",")
-	logger.Infof("Exiting printDocumentIds() with document IDs: %s", result)
+	logger.Debugf("Exiting printDocumentIds() with document IDs: %s", result)
 	return result, nil
 }
 

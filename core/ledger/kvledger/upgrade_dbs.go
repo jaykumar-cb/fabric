@@ -10,6 +10,7 @@ import (
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
 	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchbase"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchdb"
 	"github.com/pkg/errors"
 )
@@ -49,6 +50,10 @@ func UpgradeDBs(config *ledger.Config) error {
 	}
 
 	if config.StateDBConfig.StateDatabase == ledger.CouchDB {
+		if err := statecouchbase.DropApplicationDBs(config.StateDBConfig.Couchbase); err != nil {
+			return err
+		}
+	} else if config.StateDBConfig.StateDatabase == ledger.CouchDB {
 		if err := statecouchdb.DropApplicationDBs(config.StateDBConfig.CouchDB); err != nil {
 			return err
 		}

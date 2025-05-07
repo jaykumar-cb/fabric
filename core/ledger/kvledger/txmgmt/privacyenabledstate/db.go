@@ -8,6 +8,7 @@ package privacyenabledstate
 
 import (
 	"encoding/base64"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchbase"
 	"strings"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
@@ -62,7 +63,11 @@ func NewDBProvider(
 	var vdbProvider statedb.VersionedDBProvider
 	var err error
 
-	if stateDBConf != nil && stateDBConf.StateDatabase == ledger.CouchDB {
+	if stateDBConf != nil && stateDBConf.StateDatabase == ledger.Couchbase {
+		if vdbProvider, err = statecouchbase.NewVersionedDBProvider(stateDBConf.Couchbase, metricsProvider, sysNamespaces); err != nil {
+			return nil, err
+		}
+	} else if stateDBConf != nil && stateDBConf.StateDatabase == ledger.CouchDB {
 		if vdbProvider, err = statecouchdb.NewVersionedDBProvider(stateDBConf.CouchDB, metricsProvider, sysNamespaces); err != nil {
 			return nil, err
 		}

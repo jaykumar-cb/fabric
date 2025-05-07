@@ -163,7 +163,11 @@ func (provider *VersionedDBProvider) Drop(dbName string) error {
 	// loggerd.Debugf("Entering Drop() with database name: %s", dbName)
 	metadataDBName := constructMetadataDBName(dbName)
 	couchbaseDatabase := couchbaseDatabase{couchbaseInstance: provider.couchbaseInstance, dbName: metadataDBName}
-	dbExists := couchbaseDatabase.checkDatabaseExists()
+	dbExists, err := couchbaseDatabase.checkDatabaseExists()
+	if err != nil {
+		return err
+	}
+
 	if !dbExists {
 		// db does not exist
 		// loggerd.Debugf("Exiting Drop(): database %s does not exist", dbName)

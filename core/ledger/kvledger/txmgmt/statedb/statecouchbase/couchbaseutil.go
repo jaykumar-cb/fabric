@@ -76,6 +76,18 @@ func createCouchbaseInstance(config *ledger.CouchbaseConfig) (*couchbaseInstance
 	return couchbaseInstance, nil
 }
 
+func DropApplicationDBs(config *ledger.CouchbaseConfig) error {
+	couchbaseInstance, err := createCouchbaseInstance(config)
+	if err != nil {
+		return err
+	}
+	err = deleteAllDatabases(couchbaseInstance)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // constructMetadataDBName truncates the db name to couchdb allowed length to
 // construct the metadataDBName
 // Note:

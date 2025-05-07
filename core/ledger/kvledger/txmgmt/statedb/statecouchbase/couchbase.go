@@ -44,12 +44,12 @@ type IndexData struct {
 	Index string `json:"index"`
 }
 
-func getAllDatabases(couchbaseInstance *couchbaseInstance) []string {
+func getAllDatabases(couchbaseInstance *couchbaseInstance) ([]string, error) {
 	couchbaseLogger.Debugf("Entering getAllDatabases()")
 	var allCollections []string
 	scopes, err := couchbaseInstance.bucket.CollectionsV2().GetAllScopes(nil)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	for _, scope := range scopes {
 		for _, collection := range scope.Collections {
@@ -60,20 +60,42 @@ func getAllDatabases(couchbaseInstance *couchbaseInstance) []string {
 		}
 	}
 	couchbaseLogger.Debugf("Exiting getAllDatabases()")
-	return allCollections
+	return allCollections, nil
 }
 
-func (dbclient *couchbaseDatabase) checkDatabaseExists() bool {
+func deleteAllDatabases(couchbaseInstance *couchbaseInstance) error {
+	couchbaseLogger.Debugf("Entering deleteAllDatabases()")
+	collections, err := getAllDatabases(couchbaseInstance)
+	if err != nil {
+		return err
+	}
+	for _, collection := range collections {
+		if strings.HasPrefix(collection, "_") {
+			continue
+		}
+		fmt.Printf("Deleting collection %s\n", collection)
+		err := couchbaseInstance.bucket.CollectionsV2().DropCollection("_default", collection, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (dbclient *couchbaseDatabase) checkDatabaseExists() (bool, error) {
 	couchbaseLogger.Debugf("[%s] Entering checkDatabaseExists()", dbclient.dbName)
-	allDatabases := getAllDatabases(dbclient.couchbaseInstance)
+	allDatabases, err := getAllDatabases(dbclient.couchbaseInstance)
+	if err != nil {
+		return false, err
+	}
 	for _, collection := range allDatabases {
 		if collection == dbclient.dbName {
 			couchbaseLogger.Debugf("[%s] Exiting checkDatabaseExists() - found", dbclient.dbName)
-			return true
+			return true, nil
 		}
 	}
 	couchbaseLogger.Debugf("[%s] Exiting checkDatabaseExists() - not found", dbclient.dbName)
-	return false
+	return false, nil
 }
 
 func (dbclient *couchbaseDatabase) createDatabase() error {
@@ -114,7 +136,10 @@ func (dbclient *couchbaseDatabase) createDatabase() error {
 func (dbclient *couchbaseDatabase) createDatabaseIfNotExist() error {
 	couchbaseLogger.Debugf("[%s] Entering CreateDatabaseIfNotExist()", dbclient.dbName)
 
-	collectionExists := dbclient.checkDatabaseExists()
+	collectionExists, err := dbclient.checkDatabaseExists()
+	if err != nil {
+		return err
+	}
 
 	if collectionExists == false {
 		couchbaseLogger.Debugf("[%s] CreateDatabaseIfNotExist() - collection does not exist, creating a new one", dbclient.dbName)

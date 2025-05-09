@@ -25,17 +25,19 @@ type fileValidator func(fileName string, fileBytes []byte) error
 // AllowedCharsCollectionName captures the regex pattern for a valid collection name
 const AllowedCharsCollectionName = "[A-Za-z0-9_-]+"
 
-// Currently, the only metadata expected and allowed is for META-INF/statedb/couchdb/indexes.
+// Currently, the only metadata expected and allowed is for META-INF/statedb/couchdb/indexes & META-INF/statedb/couchbase/indexes.
 var fileValidators = map[*regexp.Regexp]fileValidator{
-	regexp.MustCompile("^META-INF/statedb/couchdb/indexes/.*[.]json"):                                                couchdbIndexFileValidator,
-	regexp.MustCompile("^META-INF/statedb/couchdb/collections/" + AllowedCharsCollectionName + "/indexes/.*[.]json"): couchdbIndexFileValidator,
+	regexp.MustCompile("^META-INF/statedb/couchdb/indexes/.*[.]json"):                                                  couchdbIndexFileValidator,
+	regexp.MustCompile("^META-INF/statedb/couchbase/indexes/.*[.]json"):                                                couchbaseIndexFileValidator,
+	regexp.MustCompile("^META-INF/statedb/couchdb/collections/" + AllowedCharsCollectionName + "/indexes/.*[.]json"):   couchdbIndexFileValidator,
+	regexp.MustCompile("^META-INF/statedb/couchbase/collections/" + AllowedCharsCollectionName + "/indexes/.*[.]json"): couchbaseIndexFileValidator,
 }
 
 var collectionNameValid = regexp.MustCompile("^" + AllowedCharsCollectionName)
 
 var fileNameValid = regexp.MustCompile("^.*[.]json")
 
-var validDatabases = []string{"couchdb"}
+var validDatabases = []string{"couchdb", "couchbase"}
 
 // UnhandledDirectoryError is returned for metadata files in unhandled directories
 type UnhandledDirectoryError struct {
@@ -147,6 +149,27 @@ func couchdbIndexFileValidator(fileName string, fileBytes []byte) error {
 		return &InvalidIndexContentError{fmt.Sprintf("Index metadata file [%s] is not a valid index definition: %s", fileName, err)}
 	}
 
+	return nil
+}
+
+// couchdbIndexFileValidator implements fileValidator
+func couchbaseIndexFileValidator(fileName string, fileBytes []byte) error {
+	// if the content does not validate as JSON, return err to invalidate the file
+	boolIsJSON, indexDefinition := isJSON(fileBytes)
+	if !boolIsJSON {
+		return &InvalidIndexContentError{fmt.Sprintf("Index metadata file [%s] is not a valid JSON", fileName)}
+	}
+
+	indexQuery := indexDefinition["index"]
+
+	// There should be one field index which contains the query for the index
+	if indexQuery == nil {
+		return &InvalidIndexContentError{fmt.Sprintf("Index metadata file [%s] is not a valid index definition: %s", fileName, "missing index key")}
+	}
+
+	if reflect.TypeOf(indexQuery).Kind() != reflect.String {
+		return fmt.Errorf("invalid entry, \"index\" must be a String")
+	}
 	return nil
 }
 

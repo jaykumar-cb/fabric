@@ -175,7 +175,7 @@ func (l *kvLedger) generateSnapshotMetadataFiles(
 	}
 
 	stateDBType := l.config.StateDBConfig.StateDatabase
-	if stateDBType != ledger.CouchDB {
+	if stateDBType != ledger.CouchDB && stateDBType != ledger.Couchbase {
 		stateDBType = simpleKeyValueDB
 	}
 	signableMetadata := &SnapshotSignableMetadata{

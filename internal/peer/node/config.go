@@ -18,13 +18,7 @@ import (
 func ledgerConfig() *ledger.Config {
 	// set defaults
 	internalQueryLimit := 1000
-	if viper.IsSet("ledger.state.couchDBConfig.internalQueryLimit") {
-		internalQueryLimit = viper.GetInt("ledger.state.couchDBConfig.internalQueryLimit")
-	}
-	maxBatchUpdateSize := 500
-	if viper.IsSet("ledger.state.couchDBConfig.maxBatchUpdateSize") {
-		maxBatchUpdateSize = viper.GetInt("ledger.state.couchDBConfig.maxBatchUpdateSize")
-	}
+	maxBatchUpdateSize := 1000
 	collElgProcMaxDbBatchSize := 5000
 	if viper.IsSet("ledger.pvtdataStore.collElgProcMaxDbBatchSize") {
 		collElgProcMaxDbBatchSize = viper.GetInt("ledger.pvtdataStore.collElgProcMaxDbBatchSize")
@@ -75,6 +69,12 @@ func ledgerConfig() *ledger.Config {
 	}
 
 	if conf.StateDBConfig.StateDatabase == ledger.Couchbase {
+		if viper.IsSet("ledger.state.couchDBConfig.internalQueryLimit") {
+			internalQueryLimit = viper.GetInt("ledger.state.couchbaseConfig.internalQueryLimit")
+		}
+		if viper.IsSet("ledger.state.couchbaseConfig.maxBatchUpdateSize") {
+			maxBatchUpdateSize = viper.GetInt("ledger.state.couchDBConfig.maxBatchUpdateSize")
+		}
 		conf.StateDBConfig.Couchbase = &ledger.CouchbaseConfig{
 			Address:            viper.GetString("ledger.state.couchbaseConfig.couchbaseAddress"),
 			IsCapellaInstance:  viper.GetBool("ledger.state.couchbaseConfig.isCapellaInstance"),
@@ -88,6 +88,12 @@ func ledgerConfig() *ledger.Config {
 			UserCacheSizeMBs:   viper.GetInt("ledger.state.couchbaseConfig.cacheSize"),
 		}
 	} else if conf.StateDBConfig.StateDatabase == ledger.CouchDB {
+		if viper.IsSet("ledger.state.couchDBConfig.internalQueryLimit") {
+			internalQueryLimit = viper.GetInt("ledger.state.couchDBConfig.internalQueryLimit")
+		}
+		if viper.IsSet("ledger.state.couchDBConfig.maxBatchUpdateSize") {
+			maxBatchUpdateSize = viper.GetInt("ledger.state.couchDBConfig.maxBatchUpdateSize")
+		}
 		conf.StateDBConfig.CouchDB = &ledger.CouchDBConfig{
 			Address:               viper.GetString("ledger.state.couchDBConfig.couchDBAddress"),
 			Username:              viper.GetString("ledger.state.couchDBConfig.username"),

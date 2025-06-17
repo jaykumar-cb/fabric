@@ -551,6 +551,11 @@ func serve(args []string) error {
 			logger.Panicf("cannot create docker client: %s", err)
 		}
 
+		var usingStateDb = os.Getenv("CORE_LEDGER_STATE_STATEDATABASE")
+		if usingStateDb == "" {
+			usingStateDb = "goleveldb"
+		}
+
 		dockerVM := &dockercontroller.DockerVM{
 			PeerID:        coreConfig.PeerID,
 			NetworkID:     coreConfig.NetworkID,
@@ -567,10 +572,12 @@ func serve(args []string) error {
 			// This field is superfluous for chaincodes built with v2.0+ binaries
 			// however, to prevent users from being forced to rebuild leaving for now
 			// but it should be removed in the future.
+
 			LoggingEnv: []string{
 				"CORE_CHAINCODE_LOGGING_LEVEL=" + chaincodeConfig.LogLevel,
 				"CORE_CHAINCODE_LOGGING_SHIM=" + chaincodeConfig.ShimLogLevel,
 				"CORE_CHAINCODE_LOGGING_FORMAT=" + chaincodeConfig.LogFormat,
+				"_STATE_DB=" + usingStateDb,
 			},
 			MSPID: mspID,
 		}
